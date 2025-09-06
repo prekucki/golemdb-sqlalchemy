@@ -104,6 +104,9 @@ def main():
         cursor.execute("CREATE INDEX idx_users_active ON users(active)")
         print("  ✅ Index idx_users_active created")
         
+        cursor.execute("CREATE INDEX idx_users_age ON users(age)")
+        print("  ✅ Index idx_users_age created")
+        
         cursor.execute("CREATE INDEX idx_posts_author_id ON posts(author_id)")
         print("  ✅ Index idx_posts_author_id created")
         

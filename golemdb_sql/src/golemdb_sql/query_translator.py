@@ -23,6 +23,7 @@ class QueryResult:
     offset: Optional[int] = None
     sort_by: Optional[str] = None
     sort_order: str = "asc"
+    post_filter_conditions: Optional[List[Dict[str, Any]]] = None  # Non-indexed column conditions
 
 
 class QueryTranslator:
@@ -108,7 +109,7 @@ class QueryTranslator:
                         where_clause = where_clause.this
                 else:
                     where_clause = parsed.where
-            annotation_query = self._build_annotation_query(where_clause, table_name, processed_params)
+            annotation_query, post_filter_conditions = self._build_annotation_query(where_clause, table_name, processed_params)
             
             # Extract selected columns
             selected_columns = self._extract_selected_columns(parsed, table_name)
@@ -127,7 +128,8 @@ class QueryTranslator:
                 limit=limit_offset.get('limit'),
                 offset=limit_offset.get('offset'),
                 sort_by=order_by[0]['column'] if order_by else None,
-                sort_order='desc' if order_by and order_by[0].get('desc') else 'asc'
+                sort_order='desc' if order_by and order_by[0].get('desc') else 'asc',
+                post_filter_conditions=post_filter_conditions
             )
             
         except Exception as e:
@@ -244,7 +246,7 @@ class QueryTranslator:
                         set_values[col_name] = value
             
             # Extract WHERE clause for finding entities to update
-            annotation_query = self._build_annotation_query(parsed.where, table_name, processed_params)
+            annotation_query, post_filter_conditions = self._build_annotation_query(parsed.where, table_name, processed_params)
             
             return QueryResult(
                 operation_type='UPDATE',
@@ -290,7 +292,7 @@ class QueryTranslator:
                 raise ProgrammingError(f"Table '{table_name}' does not exist")
             
             # Extract WHERE clause for finding entities to delete
-            annotation_query = self._build_annotation_query(parsed.where, table_name, processed_params)
+            annotation_query, post_filter_conditions = self._build_annotation_query(parsed.where, table_name, processed_params)
             
             return QueryResult(
                 operation_type='DELETE',
@@ -336,7 +338,7 @@ class QueryTranslator:
         
         return tables
     
-    def _build_annotation_query(self, where_expr: Optional[exp.Expression], table_name: str, parameters: Optional[Dict[str, Any]]) -> str:
+    def _build_annotation_query(self, where_expr: Optional[exp.Expression], table_name: str, parameters: Optional[Dict[str, Any]]) -> Tuple[str, List[Dict[str, Any]]]:
         """Build GolemBase annotation query from WHERE clause.
         
         Args:
@@ -345,21 +347,27 @@ class QueryTranslator:
             parameters: Query parameters
             
         Returns:
-            GolemBase annotation query string
+            Tuple of (GolemBase query string, post-filter conditions for non-indexed columns)
         """
         if not where_expr:
-            return f'relation="{self.schema_manager.project_id}.{table_name}"'
+            return f'relation="{self.schema_manager.project_id}.{table_name}"', []
         
         # Start with relation filter (project_id.table_name)
         base_query = f'relation="{self.schema_manager.project_id}.{table_name}"'
         
+        # Initialize collection for post-filter conditions
+        self._post_filter_conditions = []
+        
         # Convert WHERE expression to annotation query
         where_query = self._convert_expression_to_annotation(where_expr, table_name, parameters)
         
+        # Collect any post-filter conditions that were found
+        post_filter_conditions = getattr(self, '_post_filter_conditions', [])
+        
         if where_query:
-            return f'{base_query} && ({where_query})'
+            return f'{base_query} && ({where_query})', post_filter_conditions
         else:
-            return base_query
+            return base_query, post_filter_conditions
     
     def _convert_expression_to_annotation(self, expr: exp.Expression, table_name: str, parameters: Optional[Dict[str, Any]]) -> str:
         """Convert SQLglot expression to GolemBase annotation query.
@@ -410,16 +418,30 @@ class QueryTranslator:
             return self._format_annotation_condition(left, '<=', right, table_name)
         
         elif isinstance(expr, exp.And):
-            # AND: combine with &&
+            # AND: combine with &&, filtering out None conditions (non-indexed columns)
             left = self._convert_expression_to_annotation(expr.this, table_name, parameters)
             right = self._convert_expression_to_annotation(expr.expression, table_name, parameters)
-            return f'({left}) && ({right})'
+            
+            # Handle None values (non-indexed conditions)
+            if left is None and right is None:
+                return None  # Both conditions are post-filters
+            elif left is None:
+                return right  # Only right condition can be used in GolemBase query
+            elif right is None:
+                return left   # Only left condition can be used in GolemBase query
+            else:
+                return f'({left}) && ({right})'
         
         elif isinstance(expr, exp.Or):
-            # OR: combine with ||
+            # OR: combine with ||, but if any condition is non-indexed, we can't optimize
             left = self._convert_expression_to_annotation(expr.this, table_name, parameters)
             right = self._convert_expression_to_annotation(expr.expression, table_name, parameters)
-            return f'({left}) || ({right})'
+            
+            # For OR conditions, if any side is non-indexed, we need to fetch all and post-filter
+            if left is None or right is None:
+                return None  # Can't optimize OR with mixed indexed/non-indexed
+            else:
+                return f'({left}) || ({right})'
         
         elif isinstance(expr, exp.Not):
             # NOT: negate expression
@@ -554,7 +576,24 @@ class QueryTranslator:
             else:
                 return f'{column}={value}'
         
-        # Format based on column type
+        # Check if column is indexed - only indexed columns can use idx_ prefix
+        indexed_columns = table_def.get_indexed_columns()
+        is_indexed = column in indexed_columns
+        
+        if not is_indexed:
+            # Store this condition for post-filtering and return None to exclude from GolemBase query
+            if not hasattr(self, '_post_filter_conditions'):
+                self._post_filter_conditions = []
+            
+            self._post_filter_conditions.append({
+                'column': column,
+                'operator': operator, 
+                'value': value,
+                'column_type': col_def.type if col_def else 'STRING'
+            })
+            return None
+        
+        # Format based on column type for indexed columns
         if col_def.type.upper() in ('INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'TINYINT'):
             int_value = int(value)
             if should_encode_as_signed_integer(col_def.type):

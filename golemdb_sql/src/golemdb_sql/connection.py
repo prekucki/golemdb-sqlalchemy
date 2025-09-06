@@ -207,6 +207,17 @@ class Connection:
         
         logger.debug(f"Starting async operation: {coro}")
         
+        # Log query parameters if this is a query_entities call
+        if hasattr(coro, 'cr_frame') and coro.cr_frame:
+            try:
+                frame_locals = coro.cr_frame.f_locals
+                if 'query_string' in frame_locals:
+                    logger.debug(f"GolemBase query string: '{frame_locals['query_string']}'")
+                elif 'query' in frame_locals:
+                    logger.debug(f"GolemBase query: '{frame_locals['query']}'")
+            except:
+                pass  # Ignore errors in introspection
+        
         # Create a future to get the result
         future = asyncio.run_coroutine_threadsafe(coro, self._event_loop)
         

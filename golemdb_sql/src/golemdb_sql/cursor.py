@@ -236,7 +236,10 @@ class Cursor:
         from .query_translator import QueryTranslator
         from .schema_manager import SchemaManager
         
-        schema_manager = SchemaManager(self._connection._params.schema_id)
+        schema_manager = SchemaManager(
+            schema_id=self._connection._params.schema_id,
+            project_id=self._connection._params.app_id
+        )
         translator = QueryTranslator(schema_manager)
         
         # Parse and translate SQL to GolemBase operations
@@ -271,6 +274,11 @@ class Cursor:
     
     def _execute_select(self, sdk_client, query_result):
         """Execute SELECT operation using GolemBase query_entities."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.debug(f"SELECT operation - GolemBase query: '{query_result.golem_query}'")
+        
         # Use the golem_query to query entities
         entities = self._connection._run_async(
             sdk_client.query_entities(query_result.golem_query)
@@ -280,13 +288,21 @@ class Cursor:
         from .row_serializer import RowSerializer
         from .schema_manager import SchemaManager
         
-        schema_manager = SchemaManager(self._connection._params.schema_id)
+        schema_manager = SchemaManager(
+            schema_id=self._connection._params.schema_id,
+            project_id=self._connection._params.app_id
+        )
         serializer = RowSerializer(schema_manager)
         
         rows = []
         for entity in entities:
             # Deserialize entity back to row data
             row_data = serializer.deserialize_entity(entity.storage_value, query_result.table_name)
+            
+            # Apply post-filter conditions for non-indexed columns
+            if query_result.post_filter_conditions:
+                if not self._apply_post_filter(row_data, query_result.post_filter_conditions):
+                    continue  # Skip this row if it doesn't match post-filter conditions
             
             # Extract only requested columns
             if query_result.columns:
@@ -304,6 +320,63 @@ class Cursor:
         
         return rows
     
+    def _apply_post_filter(self, row_data: dict, conditions: list) -> bool:
+        """Apply post-filter conditions to a row for non-indexed columns.
+        
+        Args:
+            row_data: Deserialized row data
+            conditions: List of filter conditions
+            
+        Returns:
+            True if row matches all conditions, False otherwise
+        """
+        for condition in conditions:
+            column = condition['column']
+            operator = condition['operator']  
+            expected_value = condition['value']
+            column_type = condition['column_type']
+            
+            # Get actual value from row data
+            actual_value = row_data.get(column)
+            if actual_value is None:
+                return False  # NULL values don't match any condition
+            
+            # Type conversion based on column type
+            if column_type.upper() in ('INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'TINYINT'):
+                try:
+                    actual_value = int(actual_value)
+                    expected_value = int(expected_value)
+                except (ValueError, TypeError):
+                    return False
+            elif column_type.upper() in ('BOOLEAN', 'BOOL'):
+                actual_value = bool(actual_value)
+                expected_value = bool(expected_value)
+            
+            # Apply operator
+            if operator == '=':
+                if actual_value != expected_value:
+                    return False
+            elif operator == '<':
+                if actual_value >= expected_value:
+                    return False
+            elif operator == '<=':
+                if actual_value > expected_value:
+                    return False
+            elif operator == '>':
+                if actual_value <= expected_value:
+                    return False
+            elif operator == '>=':
+                if actual_value < expected_value:
+                    return False
+            elif operator == '!=':
+                if actual_value == expected_value:
+                    return False
+            else:
+                # Unsupported operator
+                return False
+        
+        return True  # All conditions matched
+    
     def _execute_insert(self, sdk_client, query_result):
         """Execute INSERT operation using GolemBase create_entities."""
         import logging
@@ -312,7 +385,10 @@ class Cursor:
         from .row_serializer import RowSerializer
         from .schema_manager import SchemaManager
         
-        schema_manager = SchemaManager(self._connection._params.schema_id)
+        schema_manager = SchemaManager(
+            schema_id=self._connection._params.schema_id,
+            project_id=self._connection._params.app_id
+        )
         serializer = RowSerializer(schema_manager)
         
         logger.debug(f"INSERT operation - Table: {query_result.table_name}")
@@ -367,7 +443,10 @@ class Cursor:
         from .row_serializer import RowSerializer
         from .schema_manager import SchemaManager
         
-        schema_manager = SchemaManager(self._connection._params.schema_id)
+        schema_manager = SchemaManager(
+            schema_id=self._connection._params.schema_id,
+            project_id=self._connection._params.app_id
+        )
         serializer = RowSerializer(schema_manager)
         
         updated_entities = []
