@@ -24,6 +24,8 @@ classifiers = [
 python = ">=3.10,<4.0"
 golem-base-sdk = "==0.1.0"
 SQLAlchemy = ">=1.4.0,<3.0"
+golemdb-sql = {path = "./golemdb_sql", develop = true}
+python-dotenv = "^1.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0"

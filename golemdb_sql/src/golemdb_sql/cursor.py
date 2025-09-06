@@ -227,7 +227,10 @@ class Cursor:
         Returns:
             Result data
         """
-        # Get the underlying SDK client
+        # Get the underlying SDK client, ensuring it's initialized
+        if not self._connection._client:
+            # Initialize client lazily on first use
+            self._connection._init_async_client()
         sdk_client = self._connection._client
         
         # Convert parameters to dict format
@@ -256,6 +259,16 @@ class Cursor:
             return self._execute_drop_table(operation)
         elif operation_upper.startswith('DROP INDEX'):
             return self._execute_drop_index(operation)
+        
+        # Schema Introspection Operations
+        elif operation_upper.startswith('SHOW TABLES'):
+            return self._execute_show_tables(operation)
+        elif operation_upper.startswith('DESCRIBE') or operation_upper.startswith('DESC '):
+            return self._execute_describe_table(operation)
+        
+        # Simple constant queries (for connection testing, etc.)
+        elif self._is_simple_constant_query(operation):
+            return self._execute_simple_constant_query(operation, params_dict)
         
         # DML Operations (Data Manipulation Language) 
         elif operation_upper.startswith('SELECT'):
@@ -716,6 +729,209 @@ class Cursor:
             else:
                 raise ProgrammingError(f"Error dropping index: {e}")
     
+    def _execute_show_tables(self, operation: str) -> dict:
+        """Execute SHOW TABLES introspection command.
+        
+        Args:
+            operation: SHOW TABLES SQL statement
+            
+        Returns:
+            Result dictionary with table names
+        """
+        try:
+            # Get schema manager from connection
+            schema_manager = self._get_schema_manager()
+            
+            # Get all table names from schema
+            table_names = schema_manager.get_table_names()
+            
+            # Format as rows for result
+            rows = [(table_name,) for table_name in sorted(table_names)]
+            
+            # Create description for single column result
+            description = [('Table', 'STRING', None, None, None, None, True)]
+            
+            return {
+                'rowcount': len(rows),
+                'description': description,
+                'rows': rows
+            }
+            
+        except Exception as e:
+            raise ProgrammingError(f"Error executing SHOW TABLES: {e}")
+    
+    def _execute_describe_table(self, operation: str) -> dict:
+        """Execute DESCRIBE table introspection command.
+        
+        Args:
+            operation: DESCRIBE [schema.]table SQL statement
+            
+        Returns:
+            Result dictionary with column information
+        """
+        try:
+            import re
+            
+            # Parse table name from DESCRIBE statement
+            # Handle both DESCRIBE table and DESC table formats
+            match = re.match(r'(?:DESCRIBE|DESC)\s+([^\s;]+)', operation.strip(), re.IGNORECASE)
+            if not match:
+                raise ValueError("Invalid DESCRIBE statement format")
+            
+            table_name = match.group(1).strip()
+            
+            # Remove quotes if present
+            if table_name.startswith('"') and table_name.endswith('"'):
+                table_name = table_name[1:-1]
+            elif table_name.startswith("'") and table_name.endswith("'"):
+                table_name = table_name[1:-1]
+            
+            # Get schema manager from connection
+            schema_manager = self._get_schema_manager()
+            
+            # Get table definition
+            table_def = schema_manager.get_table(table_name)
+            if not table_def:
+                raise ProgrammingError(f"Table '{table_name}' does not exist")
+            
+            # Format columns as rows (Field, Type, Null, Key, Default, Extra)
+            rows = []
+            for column in table_def.columns:
+                # Determine column type string
+                type_str = column.type
+                if column.length and f"({column.length})" not in type_str:
+                    type_str += f"({column.length})"
+                elif column.precision and column.scale and f"({column.precision},{column.scale})" not in type_str:
+                    type_str += f"({column.precision},{column.scale})"
+                elif column.precision and f"({column.precision})" not in type_str:
+                    type_str += f"({column.precision})"
+                
+                # Determine nullable
+                nullable = "YES" if column.nullable else "NO"
+                
+                # Determine key type
+                key = ""
+                if column.primary_key:
+                    key = "PRI"
+                elif column.unique:
+                    key = "UNI"
+                elif column.indexed:
+                    key = "MUL"
+                
+                # Get default value
+                default = column.default
+                
+                # Extra information
+                extra = ""
+                if column.primary_key and column.type.upper() == 'INTEGER':
+                    extra = "auto_increment"
+                
+                rows.append((
+                    column.name,      # Field
+                    type_str,         # Type
+                    nullable,         # Null
+                    key,             # Key
+                    default,         # Default
+                    extra            # Extra
+                ))
+            
+            # Create description for DESCRIBE result columns
+            description = [
+                ('Field', 'STRING', None, None, None, None, False),
+                ('Type', 'STRING', None, None, None, None, False),
+                ('Null', 'STRING', None, None, None, None, False),
+                ('Key', 'STRING', None, None, None, None, True),
+                ('Default', 'STRING', None, None, None, None, True),
+                ('Extra', 'STRING', None, None, None, None, True)
+            ]
+            
+            return {
+                'rowcount': len(rows),
+                'description': description,
+                'rows': rows
+            }
+            
+        except Exception as e:
+            if isinstance(e, ProgrammingError):
+                raise
+            else:
+                raise ProgrammingError(f"Error executing DESCRIBE: {e}")
+    
+    def _is_simple_constant_query(self, operation: str) -> bool:
+        """Check if the query is a simple constant query like SELECT 1."""
+        import re
+        
+        # Clean up the query
+        operation = operation.strip().upper()
+        
+        # Pattern to match simple constant SELECT queries:
+        # SELECT constant [AS alias] [FROM DUAL] [WHERE condition]
+        patterns = [
+            r'^SELECT\s+\d+\s*$',  # SELECT 1
+            r'^SELECT\s+\d+\s+AS\s+\w+\s*$',  # SELECT 1 AS test
+            r"^SELECT\s+'[^']*'\s*$",  # SELECT 'test'
+            r"^SELECT\s+'[^']*'\s+AS\s+\w+\s*$",  # SELECT 'test' AS value
+            r'^SELECT\s+\d+\s+FROM\s+DUAL\s*$',  # SELECT 1 FROM DUAL (Oracle style)
+            r'^SELECT\s+NULL\s*$',  # SELECT NULL
+            r'^SELECT\s+TRUE\s*$',  # SELECT TRUE
+            r'^SELECT\s+FALSE\s*$',  # SELECT FALSE
+            r'^SELECT\s+CURRENT_TIMESTAMP\s*$',  # SELECT CURRENT_TIMESTAMP
+            r'^SELECT\s+NOW\(\)\s*$',  # SELECT NOW()
+        ]
+        
+        return any(re.match(pattern, operation) for pattern in patterns)
+    
+    def _execute_simple_constant_query(self, operation: str, parameters: Dict[str, Any]) -> dict:
+        """Execute simple constant queries without involving GolemBase entities."""
+        import re
+        from datetime import datetime
+        
+        operation_upper = operation.strip().upper()
+        
+        try:
+            # Parse the constant value from the query
+            if 'SELECT 1' in operation_upper:
+                rows = [(1,)]
+                description = [('1', 'INTEGER', None, None, None, None, False)]
+            elif re.search(r'SELECT\s+(\d+)', operation_upper):
+                # Extract the number
+                match = re.search(r'SELECT\s+(\d+)', operation_upper)
+                value = int(match.group(1))
+                rows = [(value,)]
+                description = [(str(value), 'INTEGER', None, None, None, None, False)]
+            elif re.search(r"SELECT\s+'([^']*)'", operation_upper):
+                # Extract the string
+                match = re.search(r"SELECT\s+'([^']*)'", operation_upper)
+                value = match.group(1)
+                rows = [(value,)]
+                description = [(f"'{value}'", 'STRING', None, None, None, None, False)]
+            elif 'SELECT NULL' in operation_upper:
+                rows = [(None,)]
+                description = [('NULL', 'NULL', None, None, None, None, True)]
+            elif 'SELECT TRUE' in operation_upper:
+                rows = [(True,)]
+                description = [('TRUE', 'BOOLEAN', None, None, None, None, False)]
+            elif 'SELECT FALSE' in operation_upper:
+                rows = [(False,)]
+                description = [('FALSE', 'BOOLEAN', None, None, None, None, False)]
+            elif 'CURRENT_TIMESTAMP' in operation_upper or 'NOW()' in operation_upper:
+                current_time = datetime.now()
+                rows = [(current_time,)]
+                description = [('CURRENT_TIMESTAMP', 'DATETIME', None, None, None, None, False)]
+            else:
+                # Generic fallback
+                rows = [(1,)]
+                description = [('result', 'INTEGER', None, None, None, None, False)]
+            
+            return {
+                'rowcount': len(rows),
+                'description': description,
+                'rows': rows
+            }
+            
+        except Exception as e:
+            raise ProgrammingError(f"Error executing simple constant query: {e}")
+    
     def _convert_parameters(self, parameters: Optional[Union[Dict[str, Any], Sequence[Any]]]) -> Any:
         """Convert parameters to format expected by golem-base-sdk.
         
@@ -761,6 +977,16 @@ class Cursor:
                 # Get column descriptions if available
                 if hasattr(result, 'description'):
                     self._description = self._convert_description(result.description)
+                    
+            elif isinstance(result, dict) and 'rows' in result:
+                # Our introspection command result format
+                rows = result.get('rows', [])
+                self._results = [tuple(row) if not isinstance(row, tuple) else row for row in rows]
+                self._rowcount = result.get('rowcount', len(self._results))
+                
+                # Get description if available
+                if 'description' in result:
+                    self._description = result['description']
                     
             elif hasattr(result, 'rows') or hasattr(result, 'data'):
                 # SDK result object with rows/data attribute

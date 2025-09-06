@@ -5,9 +5,10 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel
-from .database import get_db, db_manager
+from .database import get_db, db_manager, get_golembase_connection
 from .crud import UserCRUD, PostCRUD, CategoryCRUD
 from .models import User, Post, Category
+from .golembase_crud import GolemBaseUserCRUD
 
 
 @asynccontextmanager
@@ -183,6 +184,88 @@ async def test_schema_inspection():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Schema inspection failed: {str(e)}")
+
+
+@app.get("/test/golembase")
+async def test_golembase_direct():
+    """Test direct GolemBase connection."""
+    try:
+        conn = get_golembase_connection()
+        cursor = conn.cursor()
+        
+        # Test a simple query
+        cursor.execute("SELECT 1 as test_value")
+        result = cursor.fetchone()
+        
+        cursor.close()
+        
+        return {
+            "status": "success",
+            "test_value": result[0] if result else None,
+            "message": "Direct GolemBase connection working"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"GolemBase connection failed: {str(e)}")
+
+
+# GolemBase-powered endpoints (these will work!)
+@app.post("/golembase/users/", response_model=UserResponse)
+async def create_user_golembase(user: UserCreate):
+    """Create a new user using direct GolemBase connection."""
+    try:
+        # Check if user already exists
+        existing_user = GolemBaseUserCRUD.get_user_by_username(user.username)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Username already exists")
+        
+        created_user = GolemBaseUserCRUD.create_user(
+            username=user.username,
+            email=user.email,
+            full_name=user.full_name
+        )
+        return created_user
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating user: {str(e)}")
+
+
+@app.get("/golembase/users/", response_model=List[UserResponse])
+async def get_users_golembase(skip: int = 0, limit: int = 100):
+    """Get all users using direct GolemBase connection."""
+    try:
+        users = GolemBaseUserCRUD.get_users(skip=skip, limit=limit)
+        return users
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching users: {str(e)}")
+
+
+@app.get("/golembase/users/{user_id}", response_model=UserResponse)
+async def get_user_golembase(user_id: int):
+    """Get user by ID using direct GolemBase connection."""
+    try:
+        user = GolemBaseUserCRUD.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching user: {str(e)}")
+
+
+@app.delete("/golembase/users/{user_id}")
+async def delete_user_golembase(user_id: int):
+    """Delete user by ID using direct GolemBase connection."""
+    try:
+        success = GolemBaseUserCRUD.delete_user(user_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="User not found")
+        return {"message": "User deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting user: {str(e)}")
 
 
 if __name__ == "__main__":

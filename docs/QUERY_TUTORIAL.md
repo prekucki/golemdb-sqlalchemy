@@ -10,10 +10,10 @@ This tutorial shows how to run a local node, create a few entities with annotati
 ## 2) Start a Local Node
 ```bash
 # From repo root
-docker-compose up -d
+docker compose up -d
 # RPC available at http://localhost:8545
 ```
-See `RUN_LOCALLY.md` for service details.
+Tip: check logs with `docker compose logs -f`.
 
 ## 3) Create and Fund an Account
 ```bash

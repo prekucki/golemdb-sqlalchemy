@@ -38,7 +38,7 @@ golemdb-sqlalchemy/
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/prekucki/golemdb-sqlalchemy.git
 cd golemdb-sqlalchemy
 ```
 
@@ -64,8 +64,11 @@ poetry shell
 
 ### Production Installation
 
+The project uses a multi-package structure with golemdb-sql as a subproject dependency:
+
 ```bash
 pip install sqlalchemy-dialects-golembase
+# golemdb-sql is automatically included as a dependency
 ```
 
 Or with Poetry:
@@ -73,7 +76,17 @@ Or with Poetry:
 poetry add sqlalchemy-dialects-golembase
 ```
 
-**Note**: Requires Python 3.10 or later and golem-base-sdk==0.1.0
+### Development Installation
+
+For development, clone the repository and install with Poetry:
+
+```bash
+git clone https://github.com/prekucki/golemdb-sqlalchemy.git
+cd golemdb-sqlalchemy
+poetry install  # Installs both main package and golemdb-sql subproject
+```
+
+Note: Requires Python 3.10+.
 
 ## Usage
 
@@ -82,8 +95,56 @@ poetry add sqlalchemy-dialects-golembase
 ```python
 from sqlalchemy import create_engine
 
-# Connect to GolemBase
-engine = create_engine("golembase://username:password@host:port/database")
+# Create engine with GolemBase connection URL
+engine = create_engine(
+    "golembase:///my_schema"
+    "?rpc_url=https://ethwarsaw.holesky.golemdb.io/rpc"
+    "&ws_url=wss://ethwarsaw.holesky.golemdb.io/rpc/ws"
+    "&private_key=0x0000000000000000000000000000000000000000000000000000000000000001"
+    "&app_id=myapp"
+)
+
+# Or use environment variables
+# engine = create_engine(os.environ["GOLEMBASE_DATABASE_URL"]) 
+```
+
+### Schema Introspection
+
+The dialect supports SQL schema introspection commands:
+
+```python
+from sqlalchemy.sql import text
+
+with engine.connect() as conn:
+    # List all tables in the schema
+    result = conn.execute(text("SHOW TABLES"))
+    tables = result.fetchall()
+    print(f"Found {len(tables)} tables")
+    
+    # Describe table structure
+    result = conn.execute(text("DESCRIBE users"))
+    columns = result.fetchall()
+    for col in columns:
+        print(f"Column: {col[0]} ({col[1]}) - Nullable: {col[2]}")
+```
+
+### SQLAlchemy Reflection
+
+Use SQLAlchemy's built-in reflection capabilities:
+
+```python
+from sqlalchemy import inspect
+
+inspector = inspect(engine)
+
+# Get all table names
+table_names = inspector.get_table_names()
+
+# Get column information
+for table_name in table_names:
+    columns = inspector.get_columns(table_name)
+    for col in columns:
+        print(f"{table_name}.{col['name']}: {col['type']}")
 ```
 
 ### With SQLAlchemy ORM
@@ -92,7 +153,9 @@ engine = create_engine("golembase://username:password@host:port/database")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-engine = create_engine("golembase://username:password@host:port/database")
+engine = create_engine(
+    "golembase:///?rpc_url=...&ws_url=...&private_key=...&app_id=...&schema_id=..."
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Use session
@@ -118,7 +181,7 @@ poetry install
 
 2. Set up the database connection (optional):
 ```bash
-export GOLEMBASE_DATABASE_URL="golembase://user:password@localhost:5432/testdb"
+export GOLEMBASE_DATABASE_URL="golembase:///?rpc_url=https%3A%2F%2Fethwarsaw.holesky.golemdb.io%2Frpc&ws_url=wss%3A%2F%2Fethwarsaw.holesky.golemdb.io%2Frpc%2Fws&private_key=0x...&app_id=testapp&schema_id=dev"
 ```
 
 3. Start the test application:
@@ -130,7 +193,7 @@ poetry run python -m testapp.main
 make run-app
 ```
 
-3. Visit `http://localhost:8000/docs` for the interactive API documentation.
+4. Visit `http://localhost:8000/docs` for the interactive API documentation.
 
 ### Available Test Endpoints
 
@@ -241,4 +304,4 @@ make clean
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT License.

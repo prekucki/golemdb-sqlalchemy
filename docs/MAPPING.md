@@ -21,13 +21,13 @@ CREATE INDEX idx_users_is_active ON users(is_active);
 CREATE INDEX idx_users_created_at ON users(created_at);
 ```
 
- - UNIQUE constrains can not be implemented (?? TODO check this)
- - DATETIME - should be mapped to uint64. as unix time seconds.
- - BOOLEAN - will be true/false in encoded row but 0/1 in index.
- - VARCHAR - as string in json. and string annotation in indexes.
- - INTEGER/BIGINT/SMALLINT/TINYINT - all signed integers are encoded to preserve ordering in uint64 numeric annotations
- - DECIMAL/NUMERIC - stored as string annotations with lexicographic ordering encoding
- - FLOAT/DOUBLE/REAL - NOT indexable due to precision issues, stored only in JSON data
+ - UNIQUE constraints: not currently enforced by the storage layer; enforce at write time in the application if needed.
+ - DATETIME: map to `uint64` Unix timestamp seconds for index annotations.
+ - BOOLEAN: stored as true/false in the JSON payload, and 1/0 in index annotations.
+ - VARCHAR: stored as strings in JSON and as string annotations for indexed columns.
+ - INTEGER/BIGINT/SMALLINT/TINYINT: all signed integers are encoded to preserve ordering in `uint64` numeric annotations.
+ - DECIMAL/NUMERIC: stored as string annotations using lexicographic ordering encoding.
+ - FLOAT/DOUBLE/REAL: not indexable due to precision; stored only in JSON data.
 
 ## Signed Integer Encoding
 
@@ -233,21 +233,21 @@ relation="projectB.posts" && idx_title="Sample"
 - **Scalability**: Clear separation enables horizontal scaling by project
 - **Debuggability**: Easy identification of entity types and ownership
 
-schemas are kept in XDG userdata. DDL will update toml  structured file that describes:
+Schemas are stored in platform user-data directories (XDG locations). DDL operations update a TOML file that describes:
 
  - relations
- - indexed columns.
+ - indexed columns
  - constraints
- - column types. (default values, etc.)
+ - column types (default values, etc.)
 
-Schemat filename willbe derived from connection string. connection string should determine:
+The schema filename is derived from the connection string. The connection string should specify:
 
- - rpc/ws url for api.
- - privatekey keystore id.
- - appid
- - schemaid (toml with definitonss)
+ - RPC/WS URLs for the API
+ - private key or keystore identifier
+ - app id
+ - schema id (selects the TOML schema definitions)
 
-# How to use golem-sdk
+# How to use golem-base-sdk
 
 creating entity
 
@@ -489,7 +489,7 @@ if __name__ == "__main__":
     # pip install golem-base-sdk==0.1.0 python-dotenv
     
     asyncio.run(main())
-````
+```
 
 # Development
 

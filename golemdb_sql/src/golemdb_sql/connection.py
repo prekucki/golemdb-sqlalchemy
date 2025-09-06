@@ -5,6 +5,8 @@ import threading
 import requests
 from typing import Any, Dict, List, Optional, Union
 from golem_base_sdk import GolemBaseClient
+
+# Remove nest_asyncio - it conflicts with uvloop
 from .connection_parser import parse_connection_kwargs, GolemBaseConnectionParams
 from .cursor import Cursor
 from .exceptions import (
@@ -46,82 +48,129 @@ class Connection:
             # Check basic connectivity first
             self._check_connectivity()
             
-            # Initialize async client in background thread
-            self._init_async_client()
+            # Initialize async client lazily to avoid main thread issues in web servers
+            # The client will be initialized on first use
             
         except Exception as e:
             raise DatabaseError(f"Failed to connect to GolemBase: {e}")
     
     def _init_async_client(self) -> None:
-        """Initialize async GolemBase client with background event loop."""
-        import threading
+        """Initialize async GolemBase client."""
+        import logging
+        logger = logging.getLogger(__name__)
         
+        # First try to initialize in the main thread if possible
         try:
-            # First, create the client in the main thread (for signal handler setup)
+            # Check if there's a running event loop
             try:
-                # Try to get existing event loop or create new one in main thread
-                try:
-                    temp_loop = asyncio.get_event_loop()
-                    if temp_loop.is_closed():
-                        raise RuntimeError("Event loop is closed")
-                except RuntimeError:
-                    # No event loop in current thread, create a new one
-                    temp_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(temp_loop)
+                current_loop = asyncio.get_running_loop()
+                logger.debug("Running event loop detected, using threading approach")
+                self._init_client_in_thread()
+                return
+            except RuntimeError:
+                # No running event loop, try main thread approach
+                pass
+            
+            # Try main thread initialization
+            logger.debug("Trying main thread initialization")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            client_coro = GolemBaseClient.create(
+                rpc_url=self._params.rpc_url,
+                ws_url=self._params.ws_url,
+                private_key=self._params.get_private_key_bytes()
+            )
+            
+            self._client = loop.run_until_complete(
+                asyncio.wait_for(client_coro, timeout=30.0)
+            )
+            self._event_loop = loop
+            logger.debug("GolemBase client created successfully in main thread")
+            
+        except Exception as e:
+            logger.debug(f"Main thread initialization failed: {e}")
+            # Fall back to threading approach
+            try:
+                self._init_client_in_thread()
+            except Exception as thread_e:
+                raise DatabaseError(
+                    f"Failed to initialize GolemBase client in both main thread and background thread:\n"
+                    f"  Main thread error: {e}\n"
+                    f"  Background thread error: {thread_e}\n"
+                    f"This is likely due to GolemBase SDK signal handler requirements."
+                )
+    
+    def _init_client_in_thread(self) -> None:
+        """Initialize client in a separate thread."""
+        import threading
+        import concurrent.futures
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Don't do web server detection here - it's too restrictive
+        # Let the signal handler error speak for itself if it occurs
+        
+        logger.debug("Initializing GolemBase client in background thread")
+        
+        # Clean up any existing loop/thread
+        if self._loop_thread and self._loop_thread.is_alive():
+            if self._event_loop and not self._event_loop.is_closed():
+                self._event_loop.call_soon_threadsafe(self._event_loop.stop)
+            self._loop_thread.join(timeout=1.0)
+        
+        # Create event loop in background thread
+        self._event_loop = asyncio.new_event_loop()
+        
+        def run_event_loop():
+            try:
+                logger.debug("Background event loop thread starting")
+                asyncio.set_event_loop(self._event_loop)
+                self._event_loop.run_forever()
+                logger.debug("Background event loop thread stopped")
+            except Exception as e:
+                logger.error(f"Background event loop thread error: {e}")
                 
-                # Create GolemBase client in main thread (for signal handlers)
-                client_coro = GolemBaseClient.create(
+        self._loop_thread = threading.Thread(target=run_event_loop, daemon=True)
+        self._loop_thread.start()
+        
+        # Wait for loop to start and verify it's running
+        import time
+        for i in range(10):  # Wait up to 1 second
+            time.sleep(0.1)
+            if self._event_loop.is_running():
+                logger.debug("Background event loop is running")
+                break
+        else:
+            raise DatabaseError("Failed to start background event loop")
+        
+        logger.debug("Creating GolemBase client in background thread")
+        
+        # Create client in the background thread
+        future = asyncio.run_coroutine_threadsafe(
+            asyncio.wait_for(
+                GolemBaseClient.create(
                     rpc_url=self._params.rpc_url,
                     ws_url=self._params.ws_url,
                     private_key=self._params.get_private_key_bytes()
-                )
-                
-                # Initialize client in main thread
-                self._client = temp_loop.run_until_complete(
-                    asyncio.wait_for(client_coro, timeout=30.0)
-                )
-                
-                # Now create a separate event loop for background operations
-                self._event_loop = asyncio.new_event_loop()
-                
-                # Start event loop in background thread
-                def run_event_loop():
-                    asyncio.set_event_loop(self._event_loop)
-                    self._event_loop.run_forever()
-                    
-                self._loop_thread = threading.Thread(target=run_event_loop, daemon=True)
-                self._loop_thread.start()
-                
-                # Wait a moment for the background loop to start
-                import time
-                time.sleep(0.1)
-                
-            except Exception as e:
-                raise e
-            
-        except asyncio.TimeoutError:
-            raise DatabaseError(
-                f"Timeout connecting to GolemBase endpoints:\n"
-                f"  RPC URL: {self._params.rpc_url}\n"
-                f"  WS URL: {self._params.ws_url}\n"
-                f"Check network connectivity and endpoint availability."
-            )
+                ),
+                timeout=30.0
+            ),
+            self._event_loop
+        )
+        
+        try:
+            self._client = future.result(timeout=35.0)
+            logger.debug("GolemBase client created successfully in background thread")
         except Exception as e:
-            error_msg = str(e)
-            if "signal only works in main thread" in error_msg:
+            logger.error(f"Failed to create GolemBase client in background thread: {e}")
+            if "signal only works in main thread" in str(e):
                 raise DatabaseError(
-                    f"GolemBase SDK threading issue. Try running in main thread or use:\n"
-                    f"  import asyncio\n"
-                    f"  asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # Windows only\n"
-                    f"Original error: {e}"
+                    "GolemBase SDK requires initialization in the main thread due to signal handler requirements. "
+                    "This is a fundamental limitation when running in multi-threaded environments like web servers. "
+                    "Please initialize the connection before starting the web server or use a connection pool."
                 )
-            else:
-                raise DatabaseError(
-                    f"Failed to initialize GolemBase client: {e}\n"
-                    f"  RPC URL: {self._params.rpc_url}\n"
-                    f"  WS URL: {self._params.ws_url}\n"
-                    f"  Error type: {type(e).__name__}"
-                )
+            raise
     
     def _check_connectivity(self) -> None:
         """Check basic connectivity to GolemBase endpoints before full initialization."""
@@ -202,8 +251,20 @@ class Connection:
         if self._closed:
             raise InterfaceError("Connection is closed")
             
+        # Initialize client lazily on first use
+        if not self._client:
+            logger.debug("Lazily initializing GolemBase client on first use")
+            try:
+                self._init_async_client()
+            except Exception as e:
+                raise DatabaseError(
+                    f"Failed to initialize GolemBase client on first use: {e}\n"
+                    f"This often happens when running in web servers due to signal handler restrictions.\n"
+                    f"Try initializing the connection in the main thread before starting the web server."
+                )
+            
         if not self._event_loop or not self._client:
-            raise InterfaceError("Connection not properly initialized")
+            raise InterfaceError("Connection not properly initialized after lazy initialization")
         
         logger.debug(f"Starting async operation: {coro}")
         
@@ -218,20 +279,52 @@ class Connection:
             except:
                 pass  # Ignore errors in introspection
         
-        # Create a future to get the result
-        future = asyncio.run_coroutine_threadsafe(coro, self._event_loop)
+        # Check if event loop is closed
+        if self._event_loop.is_closed():
+            raise InterfaceError("Event loop is closed")
         
-        try:
-            logger.debug("Waiting for async operation to complete (30s timeout)...")
-            result = future.result(timeout=30.0)  # 30 second timeout
-            logger.debug(f"Async operation completed successfully: {result}")
-            return result
-        except asyncio.TimeoutError:
-            logger.error("Async operation timed out after 30 seconds")
-            raise OperationalError("Operation timed out")
-        except Exception as e:
-            logger.error(f"Async operation failed with exception: {e}")
-            raise DatabaseError(f"Async operation failed: {e}")
+        # Determine if we have a background thread or main thread event loop
+        if self._loop_thread and self._loop_thread.is_alive():
+            # Background thread approach
+            logger.debug("Using background thread for async operation")
+            
+            if not self._event_loop.is_running():
+                logger.warning("Background event loop is not running, attempting to restart...")
+                try:
+                    self._init_client_in_thread()
+                except Exception as e:
+                    raise InterfaceError(f"Failed to restart background event loop: {e}")
+            
+            # Run in background thread
+            future = asyncio.run_coroutine_threadsafe(coro, self._event_loop)
+            
+            try:
+                logger.debug("Waiting for async operation to complete (30s timeout)...")
+                result = future.result(timeout=30.0)
+                logger.debug(f"Async operation completed successfully: {result}")
+                return result
+            except asyncio.TimeoutError:
+                logger.error("Async operation timed out after 30 seconds")
+                raise OperationalError("Operation timed out")
+            except Exception as e:
+                logger.error(f"Async operation failed with exception: {e}")
+                raise DatabaseError(f"Async operation failed: {e}")
+        else:
+            # Main thread approach - run directly
+            logger.debug("Using main thread for async operation")
+            
+            try:
+                result = self._event_loop.run_until_complete(
+                    asyncio.wait_for(coro, timeout=30.0)
+                )
+                logger.debug(f"Async operation completed successfully: {result}")
+                return result
+            except asyncio.TimeoutError:
+                logger.error("Async operation timed out after 30 seconds")
+                raise OperationalError("Operation timed out")
+            except Exception as e:
+                logger.error(f"Async operation failed with exception: {e}")
+                raise DatabaseError(f"Async operation failed: {e}")
     
     def commit(self) -> None:
         """Commit any pending transaction to the database.

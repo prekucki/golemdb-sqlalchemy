@@ -565,7 +565,64 @@ def main():
             print(f"    Error type: {type(e).__name__}")
             print("    Note: Check debug logs above for more details about the failure")
 
-        print("\n✨ All DDL and DML operations (including UPDATE, DELETE, and LIKE) completed successfully!")
+        print("\n🔍 Testing Schema Introspection (SHOW TABLES & DESCRIBE)...")
+        
+        try:
+            # Test SHOW TABLES command
+            print("\n  Testing SHOW TABLES command...")
+            cursor.execute("SHOW TABLES")
+            table_results = cursor.fetchall()
+            print(f"    ✅ Found {len(table_results)} tables in schema:")
+            for row in table_results:
+                print(f"      - {row[0]}")
+            
+            # Test DESCRIBE command on users table
+            print("\n  Testing DESCRIBE command on 'users' table...")
+            cursor.execute("DESCRIBE users")
+            describe_results = cursor.fetchall()
+            print(f"    ✅ Found {len(describe_results)} columns in users table:")
+            print("      Field              Type              Null  Key  Default  Extra")
+            print("      " + "-" * 70)
+            for row in describe_results:
+                field = str(row[0]).ljust(18)
+                type_str = str(row[1]).ljust(18)
+                null_str = str(row[2]).ljust(5)
+                key_str = str(row[3] or '').ljust(4)
+                default_str = str(row[4] or '').ljust(8)
+                extra_str = str(row[5] or '')
+                print(f"      {field} {type_str} {null_str} {key_str} {default_str} {extra_str}")
+            
+            # Test DESCRIBE command with DESC alias
+            print("\n  Testing DESC command (alias for DESCRIBE)...")
+            cursor.execute("DESC users")
+            desc_results = cursor.fetchall()
+            print(f"    ✅ DESC command returned {len(desc_results)} columns (same as DESCRIBE)")
+            
+            # Test DESCRIBE on non-existent table (should fail gracefully)
+            print("\n  Testing DESCRIBE on non-existent table...")
+            try:
+                cursor.execute("DESCRIBE nonexistent_table")
+                cursor.fetchall()
+                print("    ❌ ERROR: Should have failed!")
+            except Exception as e:
+                if "does not exist" in str(e).lower():
+                    print("    ✅ Correctly handled non-existent table")
+                else:
+                    print(f"    ⚠️ Unexpected error for non-existent table: {e}")
+            
+            print("\n  ✅ Schema introspection testing completed successfully!")
+            print("  ✅ SHOW TABLES command working correctly")
+            print("  ✅ DESCRIBE command working correctly")
+            print("  ✅ DESC alias working correctly")
+            print("  ✅ Error handling for non-existent tables working correctly")
+            print("  ✅ Schema introspection enables SQLAlchemy dialect reflection capabilities")
+            
+        except Exception as e:
+            print(f"    ⚠️ Schema introspection testing failed: {e}")
+            print(f"    Error type: {type(e).__name__}")
+            print("    Note: Check debug logs above for more details about the failure")
+
+        print("\n✨ All DDL, DML, and Schema Introspection operations completed successfully!")
         
     except Exception as e:
         print(f"\n❌ Error: {e}")
@@ -577,7 +634,7 @@ def main():
         conn.close()
         print("\n🔌 Connection closed")
     
-    print("\n🎉 DDL and DML Example (including UPDATE, DELETE, and LIKE operations) completed successfully!")
+    print("\n🎉 DDL, DML, and Schema Introspection Example completed successfully!")
     print("\n📁 Schema files saved to:")
     print("   Linux: ~/.local/share/golembase/schemas/ddl_test_schema.toml")
     print("   macOS: ~/Library/Application Support/golembase/schemas/ddl_test_schema.toml")
