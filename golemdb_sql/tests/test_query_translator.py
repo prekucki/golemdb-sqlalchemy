@@ -207,13 +207,84 @@ class TestQueryTranslator:
         # IS NULL should be handled appropriately
         assert 'email' in result.golem_query.lower()
     
-    def test_like_operator(self, translator):
-        """Test LIKE operator translation."""
+    def test_like_operator_basic(self, translator, mock_schema_manager):
+        """Test basic LIKE operator translation to ~ glob operator.""" 
+        mock_schema_manager.project_id = "test_project"
+        mock_schema_manager.table_exists.return_value = True
+        
+        # Test prefix pattern
         sql = "SELECT * FROM users WHERE name LIKE 'John%'"
         result = translator.translate_select(sql)
         
-        # LIKE should be converted to appropriate annotation query
-        assert 'name' in result.golem_query
+        # Should convert % to * for glob pattern
+        assert 'idx_name ~ "John*"' in result.golem_query
+        assert result.table_name == "users"
+        
+    def test_like_operator_patterns(self, translator, mock_schema_manager):
+        """Test various LIKE patterns converted to glob patterns."""
+        mock_schema_manager.project_id = "test_project"
+        mock_schema_manager.table_exists.return_value = True
+        
+        test_cases = [
+            # (SQL LIKE pattern, Expected glob pattern)
+            ('John%', 'John*'),           # Prefix
+            ('%Smith', '*Smith'),         # Suffix  
+            ('%middle%', '*middle*'),     # Contains
+            ('J_hn', 'J?hn'),            # Single char wildcard
+            ('John', 'John'),             # Exact match (no wildcards)
+            ('_%_%', '?*?*'),            # Mixed wildcards
+        ]
+        
+        for like_pattern, expected_glob in test_cases:
+            sql = f"SELECT * FROM users WHERE name LIKE '{like_pattern}'"
+            result = translator.translate_select(sql)
+            
+            expected_query_part = f'idx_name ~ "{expected_glob}"'
+            assert expected_query_part in result.golem_query, f"Failed for pattern {like_pattern}"
+    
+    def test_like_operator_escaped_chars(self, translator, mock_schema_manager):
+        """Test LIKE operator with escaped special characters."""
+        mock_schema_manager.project_id = "test_project"  
+        mock_schema_manager.table_exists.return_value = True
+        
+        test_cases = [
+            # (SQL LIKE pattern, Expected glob pattern)
+            (r'file\%name', 'file[%]name'),      # Escaped %
+            (r'file\_name', 'file_name'),        # Escaped _
+            (r'path\\file', r'path\file'),       # Escaped backslash
+            ('file*name', 'file[*]name'),        # Literal * (glob special char)
+            ('file?name', 'file[?]name'),        # Literal ? (glob special char) 
+            ('file[test]', 'file[[]test]'),      # Literal [ (glob special char)
+        ]
+        
+        for like_pattern, expected_glob in test_cases:
+            sql = f"SELECT * FROM users WHERE name LIKE '{like_pattern}'"
+            result = translator.translate_select(sql)
+            
+            expected_query_part = f'idx_name ~ "{expected_glob}"'
+            assert expected_query_part in result.golem_query, f"Failed for pattern {like_pattern}"
+            
+    def test_like_operator_non_indexed_column(self, translator, mock_schema_manager):
+        """Test LIKE operator on non-indexed columns (should use post-filtering)."""
+        mock_schema_manager.project_id = "test_project"
+        mock_schema_manager.table_exists.return_value = True
+        
+        # Test with 'content' column which is not indexed in posts table
+        sql = "SELECT * FROM posts WHERE content LIKE '%important%'"
+        result = translator.translate_select(sql)
+        
+        # Should not be in the main GolemBase query (only relation filter)
+        assert 'content' not in result.golem_query
+        assert 'relation="test_project.posts"' in result.golem_query
+        
+        # Should be in post-filter conditions
+        assert result.post_filter_conditions is not None
+        assert len(result.post_filter_conditions) == 1
+        
+        condition = result.post_filter_conditions[0]
+        assert condition['column'] == 'content'
+        assert condition['operator'] == 'LIKE'
+        assert condition['value'] == '%important%'
     
     def test_unsupported_sql_statement(self, translator):
         """Test error handling for unsupported SQL statements."""

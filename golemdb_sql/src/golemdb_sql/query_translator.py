@@ -468,16 +468,29 @@ class QueryTranslator:
             return f'!({inner})'
         
         elif isinstance(expr, exp.Like):
-            # LIKE: convert to string equality or contains (limited support)
+            # LIKE: handle differently for indexed vs non-indexed columns
             left = self._get_column_name(expr.this)
             right = self._extract_literal_value(expr.expression, parameters)
             
-            # Simple case: exact match (no wildcards)
-            if isinstance(right, str) and '%' not in right and '_' not in right:
-                return self._format_annotation_condition(left, '=', right, table_name)
+            if isinstance(right, str):
+                # Check if this column is indexed to determine how to handle
+                table_def = self.schema_manager.get_table(table_name)
+                if table_def:
+                    indexed_columns = table_def.get_indexed_columns()
+                    is_indexed = left in indexed_columns
+                    
+                    if is_indexed:
+                        # For indexed columns: convert to glob pattern and use ~ operator
+                        glob_pattern = self._convert_like_to_glob(right)
+                        return self._format_annotation_condition(left, '~', glob_pattern, table_name)
+                    else:
+                        # For non-indexed columns: store original LIKE pattern for post-filtering
+                        return self._format_annotation_condition(left, 'LIKE', right, table_name)
+                else:
+                    # Table not found in schema - treat as exact match for backward compatibility
+                    return self._format_annotation_condition(left, '=', right, table_name)
             else:
-                # GolemBase doesn't support LIKE - would need to filter results after retrieval
-                raise ProgrammingError("LIKE with wildcards not supported in GolemBase annotations")
+                raise ProgrammingError("LIKE pattern must be a string")
         
         elif isinstance(expr, exp.In):
             # IN: convert to multiple OR conditions
@@ -515,6 +528,64 @@ class QueryTranslator:
             return expr.name
         else:
             return str(expr)
+    
+    def _convert_like_to_glob(self, like_pattern: str) -> str:
+        """Convert SQL LIKE pattern to GolemBase glob pattern.
+        
+        SQL LIKE patterns:
+        - % matches zero or more characters
+        - _ matches exactly one character
+        - Literal % and _ can be escaped with backslash
+        
+        GolemBase glob patterns:
+        - * matches zero or more characters  
+        - ? matches exactly one character
+        - [abc] matches one of the listed characters
+        - Literal *, ?, [ can be escaped by placing in brackets: [*], [?], [[]
+        
+        Args:
+            like_pattern: SQL LIKE pattern string
+            
+        Returns:
+            GolemBase glob pattern string
+        """
+        result = []
+        i = 0
+        while i < len(like_pattern):
+            char = like_pattern[i]
+            
+            if char == '%':
+                # SQL % becomes glob *
+                result.append('*')
+            elif char == '_':
+                # SQL _ becomes glob ?
+                result.append('?')
+            elif char == '\\' and i + 1 < len(like_pattern):
+                # Handle escaped characters
+                next_char = like_pattern[i + 1]
+                if next_char == '%':
+                    # Escaped % - literal percent in glob needs brackets
+                    result.append('[%]')
+                elif next_char == '_':
+                    # Escaped _ - literal underscore in glob (no escaping needed)
+                    result.append('_')
+                elif next_char == '\\':
+                    # Escaped backslash
+                    result.append('\\')
+                else:
+                    # Other escaped characters pass through
+                    result.append(next_char)
+                i += 1  # Skip the next character since we processed it
+            elif char in ('*', '?', '['):
+                # These are special in glob, so escape them
+                result.append(f'[{char}]')
+            else:
+                # Regular character
+                result.append(char)
+            
+            i += 1
+            
+        return ''.join(result)
     
     def _extract_literal_value(self, expr: exp.Expression, parameters: Optional[Dict[str, Any]]) -> Any:
         """Extract literal value from expression.
@@ -604,9 +675,12 @@ class QueryTranslator:
             if not hasattr(self, '_post_filter_conditions'):
                 self._post_filter_conditions = []
             
+            # For non-indexed columns, keep the original operator (LIKE should already be LIKE)
+            post_operator = operator
+            
             self._post_filter_conditions.append({
                 'column': column,
-                'operator': operator, 
+                'operator': post_operator, 
                 'value': value,
                 'column_type': col_def.type if col_def else 'STRING'
             })
@@ -650,7 +724,11 @@ class QueryTranslator:
             return f'idx_{column}{operator}{timestamp}'
         else:
             # String annotation
-            return f'idx_{column}{operator}"{value}"'
+            if operator == '~':
+                # Glob pattern matching using ~ operator
+                return f'idx_{column} ~ "{value}"'
+            else:
+                return f'idx_{column}{operator}"{value}"'
     
     def _extract_selected_columns(self, select_expr: exp.Select, table_name: str) -> List[str]:
         """Extract selected columns from SELECT.

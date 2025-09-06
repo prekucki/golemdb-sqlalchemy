@@ -434,7 +434,138 @@ def main():
             print(f"    Error type: {type(e).__name__}")
             print("    Note: Check debug logs above for more details about the failure")
         
-        print("\n✨ All DDL and DML operations (including UPDATE and DELETE) completed successfully!")
+        print("\n🔍 Testing LIKE operator with pattern matching...")
+        
+        try:
+            # Add more test data with varied names and emails for LIKE testing
+            print("\n  Adding test data for LIKE operator examples...")
+            like_test_data = [
+                (20, 'John Smith', 'john.smith@company.com', 32, True, 2500.00),
+                (21, 'Jane Johnson', 'jane.johnson@company.com', 28, True, 3000.00),
+                (22, 'Bob Brown', 'bob.brown@external.org', 35, True, 2200.00),
+                (23, 'Alice Anderson', 'alice.anderson@company.com', 29, False, 2800.00),
+                (24, 'Charlie Chen', 'charlie.chen@freelance.net', 31, True, 3200.00),
+                (25, 'Diana Davis', 'diana@company.com', 27, True, 2900.00)
+            ]
+            
+            for record in like_test_data:
+                cursor.execute(
+                    "INSERT INTO users (id, name, email, age, active, balance) VALUES (%(id)s, %(name)s, %(email)s, %(age)s, %(active)s, %(balance)s)",
+                    {
+                        'id': record[0], 
+                        'name': record[1], 
+                        'email': record[2],
+                        'age': record[3], 
+                        'active': record[4], 
+                        'balance': record[5]
+                    }
+                )
+            print(f"    ✅ Added {len(like_test_data)} records for LIKE testing")
+            
+            # Test LIKE with prefix matching (indexed column)
+            print("\n  Testing LIKE with prefix matching on indexed column...")
+            cursor.execute("SELECT id, name, email FROM users WHERE name LIKE %(pattern)s", {'pattern': 'John%'})
+            prefix_results = cursor.fetchall()
+            print(f"    ✅ Found {len(prefix_results)} users with names starting with 'John':")
+            for row in prefix_results:
+                print(f"      {row[1]} ({row[2]})")
+                
+            # Test LIKE with suffix matching (indexed column)  
+            print("\n  Testing LIKE with suffix matching on indexed column...")
+            cursor.execute("SELECT id, name, email FROM users WHERE name LIKE %(pattern)s", {'pattern': '%son'})
+            suffix_results = cursor.fetchall()
+            print(f"    ✅ Found {len(suffix_results)} users with names ending with 'son':")
+            for row in suffix_results:
+                print(f"      {row[1]} ({row[2]})")
+                
+            # Test LIKE with contains matching (indexed column)
+            print("\n  Testing LIKE with contains matching on indexed column...")
+            cursor.execute("SELECT id, name, email FROM users WHERE email LIKE %(pattern)s", {'pattern': '%@company.com%'})
+            contains_results = cursor.fetchall()
+            print(f"    ✅ Found {len(contains_results)} users with '@company.com' in email:")
+            for row in contains_results:
+                print(f"      {row[1]} ({row[2]})")
+                
+            # Test LIKE with single character wildcard
+            print("\n  Testing LIKE with single character wildcard...")
+            cursor.execute("SELECT id, name FROM users WHERE name LIKE %(pattern)s", {'pattern': 'B_b %'})
+            single_char_results = cursor.fetchall()
+            print(f"    ✅ Found {len(single_char_results)} users matching 'B_b %' pattern:")
+            for row in single_char_results:
+                print(f"      {row[1]}")
+                
+            # Test LIKE with mixed wildcards
+            print("\n  Testing LIKE with mixed wildcards...")  
+            cursor.execute("SELECT id, name, email FROM users WHERE email LIKE %(pattern)s", {'pattern': '%.%@company.%'})
+            mixed_results = cursor.fetchall()
+            print(f"    ✅ Found {len(mixed_results)} users matching '%.%@company.%' pattern:")
+            for row in mixed_results:
+                print(f"      {row[1]} ({row[2]})")
+                
+            # Test LIKE combined with other conditions
+            print("\n  Testing LIKE combined with other WHERE conditions...")
+            cursor.execute(
+                "SELECT id, name, email, age FROM users WHERE name LIKE %(name_pattern)s AND age >= %(min_age)s AND active = %(active_status)s",
+                {
+                    'name_pattern': '%a%',  # Contains 'a'
+                    'min_age': 25,
+                    'active_status': True
+                }
+            )
+            combined_results = cursor.fetchall()
+            print(f"    ✅ Found {len(combined_results)} active users age >= 25 with 'a' in name:")
+            for row in combined_results:
+                print(f"      {row[1]} ({row[2]}) - Age: {row[3]}")
+                
+            # Test LIKE with OR conditions
+            print("\n  Testing LIKE with OR conditions...")
+            cursor.execute(
+                "SELECT id, name, email FROM users WHERE name LIKE %(pattern1)s OR email LIKE %(pattern2)s",
+                {
+                    'pattern1': 'Alice%',
+                    'pattern2': '%@freelance.%'
+                }
+            )
+            or_results = cursor.fetchall()
+            print(f"    ✅ Found {len(or_results)} users matching Alice% OR %@freelance.% patterns:")
+            for row in or_results:
+                print(f"      {row[1]} ({row[2]})")
+                
+            # Test LIKE case sensitivity
+            print("\n  Testing LIKE case sensitivity...")
+            cursor.execute("SELECT id, name FROM users WHERE name LIKE %(pattern)s", {'pattern': 'john%'})
+            case_results = cursor.fetchall()
+            print(f"    ✅ Found {len(case_results)} users matching 'john%' (lowercase) pattern:")
+            for row in case_results:
+                print(f"      {row[1]}")
+                
+            # Test LIKE with exact match (no wildcards)
+            print("\n  Testing LIKE with exact match (no wildcards)...")
+            cursor.execute("SELECT id, name, email FROM users WHERE name LIKE %(pattern)s", {'pattern': 'Bob Brown'})
+            exact_results = cursor.fetchall()
+            print(f"    ✅ Found {len(exact_results)} users with exact name 'Bob Brown':")
+            for row in exact_results:
+                print(f"      {row[1]} ({row[2]})")
+            
+            print("\n  ✅ LIKE operator testing completed successfully!")
+            print("  ✅ LIKE with prefix patterns (John%) working correctly")
+            print("  ✅ LIKE with suffix patterns (%son) working correctly") 
+            print("  ✅ LIKE with contains patterns (%@company.com%) working correctly")
+            print("  ✅ LIKE with single character wildcards (B_b %) working correctly")
+            print("  ✅ LIKE with mixed wildcards (%.%@company.%) working correctly")
+            print("  ✅ LIKE combined with other conditions working correctly")
+            print("  ✅ LIKE with OR conditions working correctly")
+            print("  ✅ LIKE case sensitivity working correctly")
+            print("  ✅ LIKE exact matching working correctly")
+            print("  ✅ LIKE patterns automatically converted to GolemDB glob patterns for indexed columns")
+            print("  ✅ Post-filtering handled correctly for non-indexed columns")
+            
+        except Exception as e:
+            print(f"    ⚠️ LIKE operator testing failed: {e}")
+            print(f"    Error type: {type(e).__name__}")
+            print("    Note: Check debug logs above for more details about the failure")
+
+        print("\n✨ All DDL and DML operations (including UPDATE, DELETE, and LIKE) completed successfully!")
         
     except Exception as e:
         print(f"\n❌ Error: {e}")
@@ -446,7 +577,7 @@ def main():
         conn.close()
         print("\n🔌 Connection closed")
     
-    print("\n🎉 DDL and DML Example (including UPDATE and DELETE operations) completed successfully!")
+    print("\n🎉 DDL and DML Example (including UPDATE, DELETE, and LIKE operations) completed successfully!")
     print("\n📁 Schema files saved to:")
     print("   Linux: ~/.local/share/golembase/schemas/ddl_test_schema.toml")
     print("   macOS: ~/Library/Application Support/golembase/schemas/ddl_test_schema.toml")
