@@ -246,7 +246,16 @@ class QueryTranslator:
                         set_values[col_name] = value
             
             # Extract WHERE clause for finding entities to update
-            annotation_query, post_filter_conditions = self._build_annotation_query(parsed.where, table_name, processed_params)
+            where_clause = None
+            if hasattr(parsed, 'where') and parsed.where is not None:
+                where_clause = parsed.where
+            elif parsed.find(exp.Where):
+                # Use find method to get WHERE clause
+                where_expr = parsed.find(exp.Where)
+                if where_expr:
+                    where_clause = where_expr.this
+            
+            annotation_query, post_filter_conditions = self._build_annotation_query(where_clause, table_name, processed_params)
             
             return QueryResult(
                 operation_type='UPDATE',

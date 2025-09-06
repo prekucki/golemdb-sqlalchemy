@@ -449,6 +449,9 @@ class Cursor:
         )
         serializer = RowSerializer(schema_manager)
         
+        # Import GolemBase types
+        from golem_base_sdk.types import GolemBaseUpdate, Annotation, EntityKey, GenericBytes
+        
         updated_entities = []
         for entity in entities:
             # Deserialize current data
@@ -460,12 +463,40 @@ class Cursor:
             # Serialize back to entity format
             json_data, annotations = serializer.serialize_row(query_result.table_name, row_data)
             
-            updated_entities.append({
-                'id': entity.id,
-                'data': json_data,
-                'string_annotations': annotations['string_annotations'],
-                'numeric_annotations': annotations['numeric_annotations']
-            })
+            # Convert annotations to proper Annotation objects
+            string_annotations = [
+                Annotation[str](key=key, value=value) 
+                for key, value in annotations['string_annotations'].items()
+            ]
+            numeric_annotations = [
+                Annotation[int](key=key, value=value)
+                for key, value in annotations['numeric_annotations'].items() 
+            ]
+            
+            # Convert entity key to proper GenericBytes format
+            if isinstance(entity.entity_key, str) and entity.entity_key.startswith('0x'):
+                entity_key_bytes = bytes.fromhex(entity.entity_key[2:])
+                entity_key_obj = EntityKey(GenericBytes(entity_key_bytes))
+            else:
+                # If it's already in the right format, use as-is
+                entity_key_obj = entity.entity_key
+            
+            # Ensure data is bytes
+            if isinstance(json_data, str):
+                json_data_bytes = json_data.encode('utf-8')
+            else:
+                json_data_bytes = json_data
+            
+            # Create GolemBaseUpdate object
+            entity_update = GolemBaseUpdate(
+                entity_key=entity_key_obj,
+                data=json_data_bytes,
+                btl=schema_manager.get_ttl_for_table(query_result.table_name),
+                string_annotations=string_annotations,
+                numeric_annotations=numeric_annotations
+            )
+            
+            updated_entities.append(entity_update)
         
         if updated_entities:
             self._connection._run_async(
@@ -481,7 +512,7 @@ class Cursor:
             sdk_client.query_entities(query_result.golem_query)
         )
         
-        entity_ids = [entity.id for entity in entities]
+        entity_ids = [entity.entity_key for entity in entities]
         
         if entity_ids:
             self._connection._run_async(

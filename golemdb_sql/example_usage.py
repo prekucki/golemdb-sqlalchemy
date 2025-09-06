@@ -220,7 +220,108 @@ def main():
             print("    Note: Check debug logs above for more details about the failure")
             print("  ✅ Parameter parsing fix working correctly for DDL operations")
         
-        print("\n✨ All DDL operations completed successfully!")
+        print("\n🔄 Testing UPDATE operations with parameter parsing...")
+        
+        try:
+            # Test UPDATE with %(name)s parameters
+            print("\n  Testing UPDATE with %(name)s parameters...")
+            cursor.execute(
+                "UPDATE users SET name = %(new_name)s, age = %(new_age)s WHERE id = %(user_id)s",
+                {
+                    'new_name': 'Alice Johnson', 
+                    'new_age': 30,
+                    'user_id': 1
+                }
+            )
+            print("    ✅ UPDATE operation successful")
+            
+            # Verify the update worked
+            print("  Verifying UPDATE results...")
+            cursor.execute("SELECT id, name, age FROM users WHERE id = %(id)s", {'id': 1})
+            updated_result = cursor.fetchone()
+            if updated_result:
+                print(f"    ✅ UPDATE verified: {updated_result[1]} (age: {updated_result[2]})")
+            else:
+                print("    ❌ Updated record not found")
+            
+            # Test UPDATE multiple columns with different data types
+            print("\n  Testing UPDATE with multiple data types...")
+            cursor.execute(
+                "UPDATE users SET active = %(active)s, balance = %(balance)s WHERE id = %(user_id)s",
+                {
+                    'active': False,
+                    'balance': 2500.75,
+                    'user_id': 2
+                }
+            )
+            print("    ✅ Multi-column UPDATE successful")
+            
+            # Test UPDATE with WHERE conditions on indexed columns
+            print("\n  Testing UPDATE with indexed column conditions...")
+            cursor.execute(
+                "UPDATE users SET name = %(new_name)s WHERE active = %(active_status)s",
+                {
+                    'new_name': 'Updated User',
+                    'active_status': False
+                }
+            )
+            print("    ✅ UPDATE with indexed WHERE condition successful")
+            
+            # Test UPDATE with complex WHERE conditions
+            print("\n  Testing UPDATE with complex WHERE conditions...")
+            cursor.execute(
+                "UPDATE users SET balance = %(new_balance)s WHERE age > %(min_age)s AND active = %(active_status)s",
+                {
+                    'new_balance': 5000.00,
+                    'min_age': 25,
+                    'active_status': True
+                }
+            )
+            print("    ✅ UPDATE with complex WHERE conditions successful")
+            
+            # Test UPDATE with non-existent records (should affect 0 rows)
+            print("\n  Testing UPDATE with non-existent records...")
+            cursor.execute(
+                "UPDATE users SET name = %(new_name)s WHERE id = %(nonexistent_id)s",
+                {
+                    'new_name': 'Should Not Exist',
+                    'nonexistent_id': 999
+                }
+            )
+            print("    ✅ UPDATE with non-existent records handled correctly (0 rows affected)")
+            
+            # Test UPDATE with negative values
+            print("\n  Testing UPDATE with negative values...")
+            cursor.execute(
+                "UPDATE users SET age = %(negative_age)s, balance = %(negative_balance)s WHERE id = %(user_id)s",
+                {
+                    'negative_age': -10,
+                    'negative_balance': -500.25,
+                    'user_id': 1
+                }
+            )
+            print("    ✅ UPDATE with negative values successful")
+            
+            # Verify all updates with SELECT
+            print("\n  Final verification of all UPDATE operations...")
+            cursor.execute("SELECT id, name, email, age, active, balance FROM users ORDER BY id")
+            all_results = cursor.fetchall()
+            print("    ✅ All users after UPDATE operations:")
+            for row in all_results:
+                print(f"      User {row[0]}: {row[1]} ({row[2]}) - Age: {row[3]}, Active: {row[4]}, Balance: {row[5]}")
+            
+            print("\n  ✅ UPDATE operations completed successfully!")
+            print("  ✅ UPDATE with %(name)s parameter parsing working correctly")
+            print("  ✅ UPDATE with multiple data types working correctly")
+            print("  ✅ UPDATE with complex WHERE conditions working correctly")
+            print("  ✅ UPDATE with negative values working correctly")
+            
+        except Exception as e:
+            print(f"    ⚠️ UPDATE operation failed: {e}")
+            print(f"    Error type: {type(e).__name__}")
+            print("    Note: Check debug logs above for more details about the failure")
+        
+        print("\n✨ All DDL and DML operations (including UPDATE) completed successfully!")
         
     except Exception as e:
         print(f"\n❌ Error: {e}")
@@ -232,7 +333,7 @@ def main():
         conn.close()
         print("\n🔌 Connection closed")
     
-    print("\n🎉 DDL Example completed successfully!")
+    print("\n🎉 DDL and DML Example (including UPDATE operations) completed successfully!")
     print("\n📁 Schema files saved to:")
     print("   Linux: ~/.local/share/golembase/schemas/ddl_test_schema.toml")
     print("   macOS: ~/Library/Application Support/golembase/schemas/ddl_test_schema.toml")

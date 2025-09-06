@@ -117,8 +117,9 @@ This encoding ensures lexicographic string ordering matches numeric ordering:
 
 ### Schema Storage Location
 
-Schema metadata is stored in XDG user data directories:
-- **Linux/macOS**: `~/.local/share/golembase/schemas/{schema_id}.toml`
+Schema metadata is stored in platform-appropriate user data directories using the `appdirs` library:
+- **Linux**: `~/.local/share/golembase/schemas/{schema_id}.toml`
+- **macOS**: `~/Library/Application Support/golembase/schemas/{schema_id}.toml`
 - **Windows**: `%APPDATA%/golembase/schemas/{schema_id}.toml`
 
 The TOML schema files contain table definitions with column precision/scale metadata:
