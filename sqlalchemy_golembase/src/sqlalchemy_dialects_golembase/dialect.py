@@ -26,7 +26,7 @@ class GolemBaseDialect(default.DefaultDialect):
     supports_native_boolean = True
     
     # Connection configuration
-    default_paramstyle = "named"
+    default_paramstyle = "pyformat"
     supports_sane_rowcount = True
     supports_sane_multi_rowcount = True
     
@@ -55,34 +55,11 @@ class GolemBaseDialect(default.DefaultDialect):
     
     def do_execute(self, cursor, statement, parameters, context=None):
         """Execute a statement with proper parameter handling."""
-        # GolemBase expects %(name)s style parameters
-        # SQLAlchemy uses :name style, so we need to convert
-        if parameters and isinstance(parameters, dict):
-            # Convert :name to %(name)s in the statement if needed
-            converted_statement = statement
-            for param_name in parameters.keys():
-                # Replace :param with %(param)s
-                converted_statement = converted_statement.replace(
-                    f":{param_name}", f"%({param_name})s"
-                )
-            statement = converted_statement
-            
         cursor.execute(statement, parameters or {})
     
     def do_executemany(self, cursor, statement, parameters, context=None):
         """Execute a statement multiple times with parameter sets."""
-        # Convert parameter style for each parameter set
-        if parameters:
-            for param_set in parameters:
-                if isinstance(param_set, dict):
-                    converted_statement = statement
-                    for param_name in param_set.keys():
-                        converted_statement = converted_statement.replace(
-                            f":{param_name}", f"%({param_name})s"
-                        )
-                    cursor.execute(converted_statement, param_set)
-        else:
-            cursor.executemany(statement, parameters)
+        cursor.executemany(statement, parameters)
     
     @classmethod
     def import_dbapi(cls):
@@ -262,9 +239,9 @@ class GolemBaseDialect(default.DefaultDialect):
         try:
             # Use DESCRIBE command to get column information
             table_ref = f"{schema}.{table_name}" if schema else table_name
-            query = f"DESCRIBE {table_ref}"
+            query = text(f"DESCRIBE {table_ref}")
             
-            result = connection.execute(text(query))
+            result = connection.execute(query)
             columns = []
             
             for row in result.fetchall():
@@ -307,9 +284,9 @@ class GolemBaseDialect(default.DefaultDialect):
         try:
             # Use DESCRIBE to find primary key columns
             table_ref = f"{schema}.{table_name}" if schema else table_name
-            query = f"DESCRIBE {table_ref}"
+            query = text(f"DESCRIBE {table_ref}")
             
-            result = connection.execute(text(query))
+            result = connection.execute(query)
             pk_columns = []
             
             for row in result.fetchall():
@@ -344,9 +321,9 @@ class GolemBaseDialect(default.DefaultDialect):
         try:
             # Use DESCRIBE to find indexed columns
             table_ref = f"{schema}.{table_name}" if schema else table_name
-            query = f"DESCRIBE {table_ref}"
+            query = text(f"DESCRIBE {table_ref}")
             
-            result = connection.execute(text(query))
+            result = connection.execute(query)
             indexes = []
             
             for row in result.fetchall():

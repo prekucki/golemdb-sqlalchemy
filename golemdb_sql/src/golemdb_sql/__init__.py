@@ -37,7 +37,7 @@ Example:
 # PEP 249 required module attributes
 apilevel = "2.0"
 threadsafety = 1  # Threads may share the module, but not connections
-paramstyle = "named"  # We support named parameters (:name, %(name)s)
+paramstyle = "pyformat"  # We support pyformat parameters (%(name)s)
 
 # Version information
 __version__ = "0.1.0"
