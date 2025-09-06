@@ -2,41 +2,25 @@
 
 import os
 import re
+from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse, parse_qs
 from .exceptions import InterfaceError
 
 
+@dataclass
 class GolemBaseConnectionParams:
     """Container for GolemBase connection parameters."""
     
-    def __init__(
-        self,
-        rpc_url: str,
-        ws_url: str,
-        private_key: str,
-        app_id: str = "default",
-        schema_id: str = "default",
-        **kwargs
-    ):
-        """Initialize connection parameters.
-        
-        Args:
-            rpc_url: HTTPS RPC endpoint URL
-            ws_url: WebSocket URL for real-time events
-            private_key: Hex private key for authentication
-            app_id: Application/Project identifier (used as projectId)
-            schema_id: Schema configuration identifier
-            **kwargs: Additional parameters
-        """
-        self.rpc_url = rpc_url
-        self.ws_url = ws_url
-        self.private_key = private_key
-        self.app_id = app_id  # This serves as projectId
-        self.schema_id = schema_id
-        self.extra_params = kwargs
-        
-        # Validate required parameters
+    rpc_url: str
+    ws_url: str
+    private_key: str
+    app_id: str = "default"
+    schema_id: str = "default"
+    extra_params: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        """Validate connection parameters after initialization."""
         self._validate()
     
     def _validate(self) -> None:
@@ -101,6 +85,130 @@ class GolemBaseConnectionParams:
             'schema_id': self.schema_id,
             **self.extra_params
         }
+    
+    @classmethod
+    def from_env(
+        cls, 
+        rpc_url_env: str = 'RPC_URL',
+        ws_url_env: str = 'WS_URL',
+        private_key_env: str = 'PRIVATE_KEY',
+        app_id_env: str = 'APP_ID',
+        schema_id_env: str = 'SCHEMA_ID',
+        **defaults
+    ) -> 'GolemBaseConnectionParams':
+        """Create connection parameters from environment variables.
+        
+        Args:
+            rpc_url_env: Environment variable name for RPC URL
+            ws_url_env: Environment variable name for WebSocket URL
+            private_key_env: Environment variable name for private key
+            app_id_env: Environment variable name for app ID
+            schema_id_env: Environment variable name for schema ID
+            **defaults: Default values for parameters
+            
+        Returns:
+            GolemBaseConnectionParams instance
+            
+        Raises:
+            InterfaceError: If required environment variables are missing
+        """
+        rpc_url = os.getenv(rpc_url_env, defaults.get('rpc_url'))
+        ws_url = os.getenv(ws_url_env, defaults.get('ws_url'))
+        private_key = os.getenv(private_key_env, defaults.get('private_key'))
+        app_id = os.getenv(app_id_env, defaults.get('app_id', 'default'))
+        schema_id = os.getenv(schema_id_env, defaults.get('schema_id', 'default'))
+        
+        if not rpc_url:
+            raise InterfaceError(f"Environment variable {rpc_url_env} is required")
+        if not ws_url:
+            raise InterfaceError(f"Environment variable {ws_url_env} is required") 
+        if not private_key:
+            raise InterfaceError(f"Environment variable {private_key_env} is required")
+        
+        # Filter out reserved parameters from defaults
+        extra_params = {k: v for k, v in defaults.items() 
+                       if k not in ['rpc_url', 'ws_url', 'private_key', 'app_id', 'schema_id']}
+        
+        return cls(
+            rpc_url=rpc_url,
+            ws_url=ws_url,
+            private_key=private_key,
+            app_id=app_id,
+            schema_id=schema_id,
+            extra_params=extra_params
+        )
+    
+    @classmethod
+    def from_url(cls, url: str, **overrides) -> 'GolemBaseConnectionParams':
+        """Create connection parameters from a GolemBase URL.
+        
+        Expected URL format:
+        golembase://private_key@host:port/app_id?schema_id=schema&ws_port=ws_port
+        
+        Args:
+            url: GolemBase connection URL
+            **overrides: Override specific parameters
+            
+        Returns:
+            GolemBaseConnectionParams instance
+            
+        Raises:
+            InterfaceError: If URL format is invalid
+        """
+        if not url.startswith('golembase://'):
+            raise InterfaceError("URL must start with 'golembase://'")
+        
+        try:
+            parsed = urlparse(url)
+            
+            # Extract private key from username
+            private_key = overrides.get('private_key', parsed.username)
+            if not private_key:
+                raise InterfaceError("Private key must be specified in URL username")
+            
+            # Extract host and port
+            host = parsed.hostname
+            port = parsed.port or 443
+            
+            # Build URLs
+            scheme = 'https' if port == 443 else 'http'
+            ws_scheme = 'wss' if port == 443 else 'ws'
+            
+            rpc_url = overrides.get('rpc_url', f"{scheme}://{host}:{port}/rpc")
+            
+            # Extract WebSocket port from query params or use same port
+            query_params = parse_qs(parsed.query)
+            ws_port = query_params.get('ws_port', [str(port)])[0]
+            ws_url = overrides.get('ws_url', f"{ws_scheme}://{host}:{ws_port}/rpc/ws")
+            
+            # Extract app_id from path
+            app_id = overrides.get('app_id', parsed.path.strip('/') or 'default')
+            
+            # Extract schema_id from query params
+            schema_id = overrides.get('schema_id', query_params.get('schema_id', ['default'])[0])
+            
+            # Build extra parameters
+            extra_params = {}
+            for k, v in query_params.items():
+                if k not in ['schema_id', 'ws_port']:
+                    extra_params[k] = v[0] if len(v) == 1 else v
+            
+            # Add any override parameters that aren't standard
+            for k, v in overrides.items():
+                if k not in ['rpc_url', 'ws_url', 'private_key', 'app_id', 'schema_id']:
+                    extra_params[k] = v
+            
+            return cls(
+                rpc_url=rpc_url,
+                ws_url=ws_url,
+                private_key=private_key,
+                app_id=app_id,
+                schema_id=schema_id,
+                extra_params=extra_params
+            )
+            
+        except Exception as e:
+            raise InterfaceError(f"Invalid GolemBase URL format: {e}")
 
 
 def parse_connection_string(connection_string: str) -> GolemBaseConnectionParams:
@@ -216,7 +324,7 @@ def _parse_url_format(url: str) -> GolemBaseConnectionParams:
             private_key=private_key,
             app_id=app_id,
             schema_id=schema_id,
-            **extra_params
+            extra_params=extra_params
         )
         
     except Exception as e:
@@ -269,7 +377,7 @@ def _parse_keyvalue_format(connection_string: str) -> GolemBaseConnectionParams:
             private_key=private_key,
             app_id=app_id,
             schema_id=schema_id,
-            **extra_params
+            extra_params=extra_params
         )
         
     except Exception as e:
@@ -322,5 +430,5 @@ def parse_connection_kwargs(**kwargs: Any) -> GolemBaseConnectionParams:
         private_key=private_key or '',
         app_id=app_id,
         schema_id=schema_id,
-        **extra_params
+        extra_params=extra_params
     )

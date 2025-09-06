@@ -301,7 +301,17 @@ class QueryTranslator:
                 raise ProgrammingError(f"Table '{table_name}' does not exist")
             
             # Extract WHERE clause for finding entities to delete
-            annotation_query, post_filter_conditions = self._build_annotation_query(parsed.where, table_name, processed_params)
+            where_clause = None
+            # Use args to get WHERE clause (parsed.where is a method, not an attribute)
+            if 'where' in parsed.args and parsed.args['where'] is not None:
+                where_clause = parsed.args['where'].this
+            else:
+                # Fallback to find method
+                where_expr = parsed.find(exp.Where)
+                if where_expr:
+                    where_clause = where_expr.this
+            
+            annotation_query, post_filter_conditions = self._build_annotation_query(where_clause, table_name, processed_params)
             
             return QueryResult(
                 operation_type='DELETE',

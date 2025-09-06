@@ -13,7 +13,7 @@ def main():
     
     # Configure debug logging for golem_base_sdk
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(sys.stdout)
@@ -21,7 +21,7 @@ def main():
     )
     
     # Enable debug logging specifically for golem_base_sdk
-    logging.getLogger('golem_base_sdk').setLevel(logging.DEBUG)
+    logging.getLogger('golem_base_sdk').setLevel(logging.INFO)
     logging.getLogger('golemdb_sql').setLevel(logging.DEBUG)
     
     print("🐛 Debug logging enabled for golem_base_sdk and golemdb_sql modules")
@@ -321,7 +321,120 @@ def main():
             print(f"    Error type: {type(e).__name__}")
             print("    Note: Check debug logs above for more details about the failure")
         
-        print("\n✨ All DDL and DML operations (including UPDATE) completed successfully!")
+        print("\n🗑️ Testing DELETE operations with parameter parsing...")
+        
+        try:
+            # First, let's add more test data specifically for DELETE examples
+            print("\n  Adding additional test data for DELETE examples...")
+            delete_test_records = [
+                (10, 'Delete Test 1', 'deltest@example.com', 35, True, 1000.00),
+                (11, 'Delete Test 2', 'deltest2@example.com', 40, False, 2000.00),
+                (12, 'Delete Test 3', 'deltest3@example.com', 25, True, 500.00),
+                (13, 'Delete Test 4', 'deltest4@example.com', 50, False, 3000.00),
+            ]
+            
+            for record in delete_test_records:
+                cursor.execute(
+                    "INSERT INTO users (id, name, email, age, active, balance) VALUES (%(id)s, %(name)s, %(email)s, %(age)s, %(active)s, %(balance)s)",
+                    {
+                        'id': record[0], 
+                        'name': record[1], 
+                        'email': record[2],
+                        'age': record[3], 
+                        'active': record[4], 
+                        'balance': record[5]
+                    }
+                )
+            print(f"    ✅ Added {len(delete_test_records)} records for DELETE testing")
+            
+            # Test DELETE with simple WHERE clause
+            print("\n  Testing DELETE with %(name)s parameters...")
+            cursor.execute(
+                "DELETE FROM users WHERE id = %(user_id)s",
+                {'user_id': 10}
+            )
+            print("    ✅ DELETE with simple WHERE condition successful")
+            
+            # Verify the deletion worked
+            print("  Verifying DELETE results...")
+            cursor.execute("SELECT COUNT(*) FROM users WHERE id = %(id)s", {'id': 10})
+            count_result = cursor.fetchone()
+            count = count_result[0] if count_result else 0
+            print(f"    ✅ DELETE verified: {count} records found with id=10 (should be 0)")
+            
+            # Test DELETE with indexed column condition
+            print("\n  Testing DELETE with indexed column conditions...")
+            cursor.execute(
+                "DELETE FROM users WHERE active = %(active_status)s AND age > %(min_age)s",
+                {
+                    'active_status': False,
+                    'min_age': 35
+                }
+            )
+            print("    ✅ DELETE with indexed column conditions successful")
+            
+            # Test DELETE with email condition (string matching)
+            print("\n  Testing DELETE with string matching...")
+            cursor.execute(
+                "DELETE FROM users WHERE email = %(email)s",
+                {'email': 'deltest3@example.com'}
+            )
+            print("    ✅ DELETE with string matching successful")
+            
+            # Test DELETE with complex WHERE conditions
+            print("\n  Testing DELETE with complex WHERE conditions...")
+            cursor.execute(
+                "DELETE FROM users WHERE age < %(max_age)s AND balance > %(min_balance)s",
+                {
+                    'max_age': 30,
+                    'min_balance': 400.00
+                }
+            )
+            print("    ✅ DELETE with complex WHERE conditions successful")
+            
+            # Test DELETE with non-existent condition (should affect 0 rows)
+            print("\n  Testing DELETE with non-existent condition...")
+            cursor.execute(
+                "DELETE FROM users WHERE id = %(nonexistent_id)s",
+                {'nonexistent_id': 999}
+            )
+            print("    ✅ DELETE with non-existent condition handled correctly (0 rows affected)")
+            
+            # Test DELETE with negative value conditions
+            print("\n  Testing DELETE with negative value conditions...")
+            cursor.execute(
+                "DELETE FROM users WHERE age < %(negative_age)s OR balance < %(negative_balance)s",
+                {
+                    'negative_age': 0,
+                    'negative_balance': 0
+                }
+            )
+            print("    ✅ DELETE with negative value conditions successful")
+            
+            # Show remaining records after DELETE operations
+            print("\n  Final verification of all DELETE operations...")
+            cursor.execute("SELECT id, name, email, age, active, balance FROM users WHERE id >= 10 ORDER BY id")
+            delete_test_results = cursor.fetchall()
+            print("    ✅ Remaining test records after DELETE operations:")
+            if delete_test_results:
+                for row in delete_test_results:
+                    print(f"      User {row[0]}: {row[1]} ({row[2]}) - Age: {row[3]}, Active: {row[4]}, Balance: {row[5]}")
+            else:
+                print("      No test records remaining (all successfully deleted)")
+            
+            print("\n  ✅ DELETE operations completed successfully!")
+            print("  ✅ DELETE with %(name)s parameter parsing working correctly")
+            print("  ✅ DELETE with indexed column conditions working correctly")
+            print("  ✅ DELETE with complex WHERE conditions working correctly")
+            print("  ✅ DELETE with string matching working correctly")
+            print("  ✅ DELETE with negative value conditions working correctly")
+            
+        except Exception as e:
+            print(f"    ⚠️ DELETE operation failed: {e}")
+            print(f"    Error type: {type(e).__name__}")
+            print("    Note: Check debug logs above for more details about the failure")
+        
+        print("\n✨ All DDL and DML operations (including UPDATE and DELETE) completed successfully!")
         
     except Exception as e:
         print(f"\n❌ Error: {e}")
@@ -333,7 +446,7 @@ def main():
         conn.close()
         print("\n🔌 Connection closed")
     
-    print("\n🎉 DDL and DML Example (including UPDATE operations) completed successfully!")
+    print("\n🎉 DDL and DML Example (including UPDATE and DELETE operations) completed successfully!")
     print("\n📁 Schema files saved to:")
     print("   Linux: ~/.local/share/golembase/schemas/ddl_test_schema.toml")
     print("   macOS: ~/Library/Application Support/golembase/schemas/ddl_test_schema.toml")

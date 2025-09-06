@@ -136,3 +136,7 @@ Thumbs.db
 *.db
 *.sqlite
 *.log
+
+AGENTS.md
+CLAUDE.local.md
+

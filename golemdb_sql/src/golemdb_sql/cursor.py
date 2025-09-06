@@ -11,6 +11,7 @@ from .exceptions import (
     OperationalError,
     ProgrammingError,
 )
+from .filters import apply_post_filter, has_post_filter_conditions
 
 
 class Cursor:
@@ -301,7 +302,7 @@ class Cursor:
             
             # Apply post-filter conditions for non-indexed columns
             if query_result.post_filter_conditions:
-                if not self._apply_post_filter(row_data, query_result.post_filter_conditions):
+                if not apply_post_filter(row_data, query_result.post_filter_conditions):
                     continue  # Skip this row if it doesn't match post-filter conditions
             
             # Extract only requested columns
@@ -319,63 +320,6 @@ class Cursor:
             rows.append(row_tuple)
         
         return rows
-    
-    def _apply_post_filter(self, row_data: dict, conditions: list) -> bool:
-        """Apply post-filter conditions to a row for non-indexed columns.
-        
-        Args:
-            row_data: Deserialized row data
-            conditions: List of filter conditions
-            
-        Returns:
-            True if row matches all conditions, False otherwise
-        """
-        for condition in conditions:
-            column = condition['column']
-            operator = condition['operator']  
-            expected_value = condition['value']
-            column_type = condition['column_type']
-            
-            # Get actual value from row data
-            actual_value = row_data.get(column)
-            if actual_value is None:
-                return False  # NULL values don't match any condition
-            
-            # Type conversion based on column type
-            if column_type.upper() in ('INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'TINYINT'):
-                try:
-                    actual_value = int(actual_value)
-                    expected_value = int(expected_value)
-                except (ValueError, TypeError):
-                    return False
-            elif column_type.upper() in ('BOOLEAN', 'BOOL'):
-                actual_value = bool(actual_value)
-                expected_value = bool(expected_value)
-            
-            # Apply operator
-            if operator == '=':
-                if actual_value != expected_value:
-                    return False
-            elif operator == '<':
-                if actual_value >= expected_value:
-                    return False
-            elif operator == '<=':
-                if actual_value > expected_value:
-                    return False
-            elif operator == '>':
-                if actual_value <= expected_value:
-                    return False
-            elif operator == '>=':
-                if actual_value < expected_value:
-                    return False
-            elif operator == '!=':
-                if actual_value == expected_value:
-                    return False
-            else:
-                # Unsupported operator
-                return False
-        
-        return True  # All conditions matched
     
     def _execute_insert(self, sdk_client, query_result):
         """Execute INSERT operation using GolemBase create_entities."""
@@ -507,19 +451,35 @@ class Cursor:
     
     def _execute_delete(self, sdk_client, query_result):
         """Execute DELETE operation using GolemBase delete_entities."""
+        # Import GolemBase types
+        from golem_base_sdk.types import GolemBaseDelete, GenericBytes, EntityKey
+        
         # First find entities to delete
         entities = self._connection._run_async(
             sdk_client.query_entities(query_result.golem_query)
         )
         
-        entity_ids = [entity.entity_key for entity in entities]
+        # Create GolemBaseDelete objects
+        delete_objects = []
+        for entity in entities:
+            # Convert entity key to proper GenericBytes format
+            if isinstance(entity.entity_key, str) and entity.entity_key.startswith('0x'):
+                entity_key_bytes = bytes.fromhex(entity.entity_key[2:])
+                entity_key_obj = EntityKey(GenericBytes(entity_key_bytes))
+            else:
+                # If it's already in the right format, use as-is
+                entity_key_obj = entity.entity_key
+            
+            # Create GolemBaseDelete object
+            delete_obj = GolemBaseDelete(entity_key=entity_key_obj)
+            delete_objects.append(delete_obj)
         
-        if entity_ids:
+        if delete_objects:
             self._connection._run_async(
-                sdk_client.delete_entities(entity_ids)
+                sdk_client.delete_entities(delete_objects)
             )
         
-        return len(entity_ids)
+        return len(delete_objects)
     
     def _execute_create_table(self, operation: str) -> dict:
         """Execute CREATE TABLE DDL operation.

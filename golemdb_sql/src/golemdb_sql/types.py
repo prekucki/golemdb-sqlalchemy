@@ -219,7 +219,7 @@ def get_type_object(golembase_type: str) -> DBAPITypeObject:
     return GOLEMBASE_TYPE_MAP.get(base_type, STRING)
 
 
-# Signed integer encoding for GolemDB uint64 numeric annotations
+# Signed integer encoding for GolemBase uint64 numeric annotations
 def encode_signed_to_uint64(value: int, bits: int = 64) -> int:
     """Encode signed integer to uint64 preserving ordering without high bit.
     

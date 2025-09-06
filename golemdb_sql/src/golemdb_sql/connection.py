@@ -132,7 +132,7 @@ class Connection:
             response = requests.get(
                 self._params.rpc_url,
                 timeout=5,
-                headers={'User-Agent': 'golemdb-sql/0.1.0'}
+                headers={'User-Agent': 'golembase-sql/0.1.0'}
             )
             # Any response (even error) means the endpoint is reachable
         except requests.exceptions.Timeout:
