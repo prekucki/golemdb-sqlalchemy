@@ -221,45 +221,55 @@ def get_type_object(golembase_type: str) -> DBAPITypeObject:
 
 # Signed integer encoding for GolemDB uint64 numeric annotations
 def encode_signed_to_uint64(value: int, bits: int = 64) -> int:
-    """Encode signed integer to uint64 preserving ordering.
+    """Encode signed integer to uint64 preserving ordering without high bit.
     
-    Flips the most significant bit so that:
-    - Negative numbers map to 0x0000000000000000 - 0x7FFFFFFFFFFFFFFF
-    - Positive numbers map to 0x8000000000000000 - 0xFFFFFFFFFFFFFFFF
-    - Zero maps to 0x8000000000000000
+    Modified encoding strategy to avoid GolemBase "high bit set not supported" limitation:
+    - Maps signed integers to range [0, 2^62] to avoid setting the high bit (bit 63)
+    - Preserves ordering: negative < 0 < positive
+    - Uses simple offset encoding without bit flipping
     
-    This preserves ordering: -2 < -1 < 0 < 1 < 2...
+    Encoding formula: value + offset (where offset centers the range at 2^61)
     
     Args:
         value: Signed integer to encode
-        bits: Number of bits (32 for INTEGER, 64 for BIGINT)
+        bits: Number of bits (8, 16, 32, or 64)
         
     Returns:
-        Encoded value as uint64
+        Encoded value as uint64 (guaranteed < 2^63 to avoid high bit)
         
     Raises:
         OverflowError: If value doesn't fit in specified bit width
     """
     if bits == 8:
+        # TINYINT: -2^7 to 2^7-1 (-128 to 127) -> range of 256 values
         if not (-2**7 <= value < 2**7):
             raise OverflowError(f"Value {value} doesn't fit in 8-bit signed integer")
-        # For 8-bit integers: add 2^7 then shift to 64-bit space
-        return (value + 2**7) + 2**63
+        # Map to range [0, 255] with center at 128
+        return value + 2**7
     elif bits == 16:
+        # SMALLINT: -2^15 to 2^15-1 (-32,768 to 32,767) -> range of 65536 values  
         if not (-2**15 <= value < 2**15):
             raise OverflowError(f"Value {value} doesn't fit in 16-bit signed integer")
-        # For 16-bit integers: add 2^15 then shift to 64-bit space
-        return (value + 2**15) + 2**63
+        # Map to range [0, 65535] with center at 32768
+        return value + 2**15
     elif bits == 32:
+        # INTEGER: -2^31 to 2^31-1 -> range of ~4.3B values
         if not (-2**31 <= value < 2**31):
             raise OverflowError(f"Value {value} doesn't fit in 32-bit signed integer")
-        # For 32-bit integers, shift by adding 2^31 then encode in 64-bit space  
-        return (value + 2**31) + 2**63
+        # Map to range [0, 4294967295] with center at 2^31
+        return value + 2**31
     elif bits == 64:
+        # BIGINT: -2^63 to 2^63-1 -> full signed 64-bit range
         if not (-2**63 <= value < 2**63):
             raise OverflowError(f"Value {value} doesn't fit in 64-bit signed integer")
-        # For 64-bit integers, flip MSB by adding 2^63
-        return (value + 2**63) % (2**64)
+        # Special handling for 64-bit to avoid high bit:
+        # We cannot use the full range due to GolemBase limitations
+        # For now, limit to a safe range that doesn't set the high bit
+        # This may not handle the full signed 64-bit range, but preserves ordering
+        max_safe_input = 2**62 - 1  # Largest input that won't cause high bit when offset
+        if value < -2**62 or value > max_safe_input:
+            raise OverflowError(f"Value {value} exceeds safe range for GolemBase encoding")
+        return value + 2**62
     else:
         raise ValueError(f"Unsupported bit width: {bits}")
 
@@ -268,30 +278,27 @@ def decode_uint64_to_signed(encoded_value: int, bits: int = 64) -> int:
     """Decode uint64 back to signed integer.
     
     Reverses the encoding applied by encode_signed_to_uint64.
+    Uses simple offset subtraction to reverse the encoding.
     
     Args:
         encoded_value: Encoded value as uint64
-        bits: Number of bits (32 for INTEGER, 64 for BIGINT)
+        bits: Number of bits (8, 16, 32, or 64)
         
     Returns:
         Original signed integer value
     """
     if bits == 8:
-        # Reverse 8-bit encoding
-        return (encoded_value - 2**63) - 2**7
+        # Reverse 8-bit encoding: value + 2^7 -> value
+        return encoded_value - 2**7
     elif bits == 16:
-        # Reverse 16-bit encoding
-        return (encoded_value - 2**63) - 2**15
+        # Reverse 16-bit encoding: value + 2^15 -> value  
+        return encoded_value - 2**15
     elif bits == 32:
-        # Reverse 32-bit encoding
-        return (encoded_value - 2**63) - 2**31
+        # Reverse 32-bit encoding: value + 2^31 -> value
+        return encoded_value - 2**31
     elif bits == 64:
-        # Reverse 64-bit encoding: subtract 2^63 and handle overflow
-        result = encoded_value - 2**63
-        # If result is >= 2^63, it represents a negative number
-        if result >= 2**63:
-            result -= 2**64
-        return result
+        # Reverse 64-bit encoding: value + 2^62 -> value
+        return encoded_value - 2**62
     else:
         raise ValueError(f"Unsupported bit width: {bits}")
 

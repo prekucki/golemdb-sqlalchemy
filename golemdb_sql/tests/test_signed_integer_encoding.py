@@ -15,66 +15,66 @@ class TestSignedIntegerEncoding:
     def test_encode_signed_32bit_zero(self):
         """Test encoding zero for 32-bit integers."""
         result = encode_signed_to_uint64(0, 32)
-        # For 32-bit: 0 + 2^31 + 2^63 = 2^31 + 2^63
-        expected = 2**31 + 2**63
+        # New GolemBase-compatible encoding: 0 + 2^31 = 2^31
+        expected = 2**31
         assert result == expected
     
     def test_encode_signed_32bit_positive(self):
         """Test encoding positive values for 32-bit integers."""
         # Test 1
         result = encode_signed_to_uint64(1, 32)
-        expected = 1 + 2**31 + 2**63
+        expected = 1 + 2**31
         assert result == expected
         
         # Test max positive 32-bit value
         max_32_pos = 2**31 - 1
         result = encode_signed_to_uint64(max_32_pos, 32)
-        expected = max_32_pos + 2**31 + 2**63
+        expected = max_32_pos + 2**31
         assert result == expected
     
     def test_encode_signed_32bit_negative(self):
         """Test encoding negative values for 32-bit integers."""
         # Test -1
         result = encode_signed_to_uint64(-1, 32)
-        expected = -1 + 2**31 + 2**63
+        expected = -1 + 2**31
         assert result == expected
         
         # Test min negative 32-bit value
         min_32_neg = -2**31
         result = encode_signed_to_uint64(min_32_neg, 32)
-        expected = min_32_neg + 2**31 + 2**63
+        expected = min_32_neg + 2**31
         assert result == expected
     
     def test_encode_signed_64bit_zero(self):
         """Test encoding zero for 64-bit integers."""
         result = encode_signed_to_uint64(0, 64)
-        # For 64-bit: 0 + 2^63 = 2^63 (MSB flipped)
-        expected = 2**63
+        # New GolemBase-compatible encoding: 0 + 2^62 = 2^62
+        expected = 2**62
         assert result == expected
     
     def test_encode_signed_64bit_positive(self):
         """Test encoding positive values for 64-bit integers."""
         # Test 1
         result = encode_signed_to_uint64(1, 64)
-        expected = 1 + 2**63
+        expected = 1 + 2**62
         assert result == expected
         
-        # Test large positive value
-        large_pos = 2**62
+        # Test large positive value (within safe range)
+        large_pos = 2**61
         result = encode_signed_to_uint64(large_pos, 64)
-        expected = large_pos + 2**63
+        expected = large_pos + 2**62
         assert result == expected
     
     def test_encode_signed_64bit_negative(self):
         """Test encoding negative values for 64-bit integers."""
         # Test -1
         result = encode_signed_to_uint64(-1, 64)
-        expected = (-1 + 2**63) % (2**64)
+        expected = -1 + 2**62
         assert result == expected
         
         # Test -2
         result = encode_signed_to_uint64(-2, 64)
-        expected = (-2 + 2**63) % (2**64)
+        expected = -2 + 2**62
         assert result == expected
     
     def test_decode_roundtrip_32bit(self):
@@ -88,7 +88,8 @@ class TestSignedIntegerEncoding:
     
     def test_decode_roundtrip_64bit(self):
         """Test that encode/decode roundtrip works for 64-bit values."""
-        test_values = [-2**63, -2**32, -1, 0, 1, 2**32, 2**63 - 1]
+        # Use safe range values that work with GolemBase constraints
+        test_values = [-2**62, -2**32, -1, 0, 1, 2**32, 2**62 - 1]
         
         for value in test_values:
             encoded = encode_signed_to_uint64(value, 64)
@@ -137,41 +138,41 @@ class TestSignedIntegerEncoding:
             encode_signed_to_uint64(-2**31 - 1, 32)
     
     def test_range_boundaries_64bit(self):
-        """Test encoding at 64-bit range boundaries."""
-        # Test min value
-        min_val = -2**63
+        """Test encoding at 64-bit range boundaries (GolemBase safe range)."""
+        # Test min safe value
+        min_val = -2**62
         encoded = encode_signed_to_uint64(min_val, 64)
         decoded = decode_uint64_to_signed(encoded, 64)
         assert decoded == min_val
         
-        # Test max value
-        max_val = 2**63 - 1
+        # Test max safe value
+        max_val = 2**62 - 1
         encoded = encode_signed_to_uint64(max_val, 64)
         decoded = decode_uint64_to_signed(encoded, 64)
         assert decoded == max_val
         
-        # Test overflow
+        # Test overflow beyond safe range
         with pytest.raises(OverflowError):
-            encode_signed_to_uint64(2**63, 64)
+            encode_signed_to_uint64(2**62, 64)
         
         with pytest.raises(OverflowError):
-            encode_signed_to_uint64(-2**63 - 1, 64)
+            encode_signed_to_uint64(-2**62 - 1, 64)
     
     def test_encode_signed_8bit(self):
         """Test encoding 8-bit (TINYINT) values."""
         # Test zero
         result = encode_signed_to_uint64(0, 8)
-        expected = 2**7 + 2**63  # 0 + 128 + 2^63
+        expected = 2**7  # 0 + 128
         assert result == expected
         
         # Test positive
         result = encode_signed_to_uint64(127, 8)  # Max TINYINT
-        expected = 127 + 2**7 + 2**63
+        expected = 127 + 2**7
         assert result == expected
         
         # Test negative
         result = encode_signed_to_uint64(-128, 8)  # Min TINYINT
-        expected = -128 + 2**7 + 2**63
+        expected = -128 + 2**7
         assert result == expected
         
         # Test roundtrip
@@ -184,17 +185,17 @@ class TestSignedIntegerEncoding:
         """Test encoding 16-bit (SMALLINT) values."""
         # Test zero
         result = encode_signed_to_uint64(0, 16)
-        expected = 2**15 + 2**63  # 0 + 32768 + 2^63
+        expected = 2**15  # 0 + 32768
         assert result == expected
         
         # Test positive
         result = encode_signed_to_uint64(32767, 16)  # Max SMALLINT
-        expected = 32767 + 2**15 + 2**63
+        expected = 32767 + 2**15
         assert result == expected
         
         # Test negative
         result = encode_signed_to_uint64(-32768, 16)  # Min SMALLINT
-        expected = -32768 + 2**15 + 2**63
+        expected = -32768 + 2**15
         assert result == expected
         
         # Test roundtrip
@@ -295,7 +296,7 @@ class TestSignedIntegerIntegration:
         """Test that schema manager applies signed integer encoding to annotations."""
         row_data = {
             "id": -123,
-            "big_id": -9223372036854775808,  # Min 64-bit value
+            "big_id": -4611686018427387904,  # Safe 64-bit value (min for our encoding)
             "small_id": -100,
             "tiny_id": -50,
             "name": "test"
@@ -303,24 +304,29 @@ class TestSignedIntegerIntegration:
         
         annotations = schema_manager.get_entity_annotations_for_table("test_table", row_data)
         
-        # Check that INTEGER column is encoded
+        # Check that INTEGER column is encoded (with idx_ prefix)
         encoded_id = encode_signed_to_uint64(-123, 32)
-        assert annotations["numeric_annotations"]["id"] == encoded_id
+        assert annotations["numeric_annotations"]["idx_id"] == encoded_id
         
-        # Check that BIGINT column is encoded
-        encoded_big_id = encode_signed_to_uint64(-9223372036854775808, 64)
-        assert annotations["numeric_annotations"]["big_id"] == encoded_big_id
+        # Check that BIGINT column is encoded (with idx_ prefix)
+        encoded_big_id = encode_signed_to_uint64(-4611686018427387904, 64)
+        assert annotations["numeric_annotations"]["idx_big_id"] == encoded_big_id
         
-        # Check that SMALLINT column is encoded
+        # Check that SMALLINT column is encoded (with idx_ prefix)
         encoded_small_id = encode_signed_to_uint64(-100, 16)
-        assert annotations["numeric_annotations"]["small_id"] == encoded_small_id
+        assert annotations["numeric_annotations"]["idx_small_id"] == encoded_small_id
         
-        # Check that TINYINT column is encoded
+        # Check that TINYINT column is encoded (with idx_ prefix)
         encoded_tiny_id = encode_signed_to_uint64(-50, 8)
-        assert annotations["numeric_annotations"]["tiny_id"] == encoded_tiny_id
+        assert annotations["numeric_annotations"]["idx_tiny_id"] == encoded_tiny_id
         
-        # Check string annotation
-        assert annotations["string_annotations"]["name"] == "test"
+        # Check that non-indexed string columns are not in annotations
+        # (Only indexed columns and metadata annotations should be present)
+        assert "name" not in annotations["string_annotations"]
+        
+        # Check metadata annotations
+        assert annotations["string_annotations"]["row_type"] == "json"
+        assert annotations["string_annotations"]["relation"] == "default.test_table"
     
     def test_query_translator_encoding(self, schema_manager):
         """Test that query translator applies signed integer encoding to query conditions."""

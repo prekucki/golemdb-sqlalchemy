@@ -286,7 +286,7 @@ class Cursor:
         rows = []
         for entity in entities:
             # Deserialize entity back to row data
-            row_data = serializer.deserialize_entity(entity.data, query_result.table_name)
+            row_data = serializer.deserialize_entity(entity.storage_value, query_result.table_name)
             
             # Extract only requested columns
             if query_result.columns:
@@ -306,26 +306,54 @@ class Cursor:
     
     def _execute_insert(self, sdk_client, query_result):
         """Execute INSERT operation using GolemBase create_entities."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         from .row_serializer import RowSerializer
         from .schema_manager import SchemaManager
         
         schema_manager = SchemaManager(self._connection._params.schema_id)
         serializer = RowSerializer(schema_manager)
         
+        logger.debug(f"INSERT operation - Table: {query_result.table_name}")
+        logger.debug(f"INSERT operation - Raw data: {query_result.insert_data}")
+        
         # Serialize row data to entity format
         json_data, annotations = serializer.serialize_row(query_result.table_name, query_result.insert_data)
         
-        # Create entity
-        entity_data = {
-            'data': json_data,
-            'string_annotations': annotations['string_annotations'],
-            'numeric_annotations': annotations['numeric_annotations'],
-            'ttl': schema_manager.get_ttl_for_table(query_result.table_name)
-        }
+        logger.debug(f"INSERT operation - Serialized JSON data: {json_data}")
+        logger.debug(f"INSERT operation - String annotations: {annotations['string_annotations']}")
+        logger.debug(f"INSERT operation - Numeric annotations: {annotations['numeric_annotations']}")
+        
+        # Import GolemBase types
+        from golem_base_sdk.types import GolemBaseCreate, Annotation
+        
+        # Convert annotations to proper Annotation objects
+        string_annotations = [
+            Annotation[str](key=key, value=value) 
+            for key, value in annotations['string_annotations'].items()
+        ]
+        numeric_annotations = [
+            Annotation[int](key=key, value=value)
+            for key, value in annotations['numeric_annotations'].items() 
+        ]
+        
+        # Create GolemBaseCreate object
+        entity_create = GolemBaseCreate(
+            data=json_data,
+            btl=schema_manager.get_ttl_for_table(query_result.table_name),
+            string_annotations=string_annotations,
+            numeric_annotations=numeric_annotations
+        )
+        
+        logger.debug(f"INSERT operation - GolemBaseCreate object: {entity_create}")
+        logger.debug(f"INSERT operation - Calling sdk_client.create_entities([entity_create])")
         
         entity_ids = self._connection._run_async(
-            sdk_client.create_entities([entity_data])
+            sdk_client.create_entities([entity_create])
         )
+        
+        logger.debug(f"INSERT operation - Created entity IDs: {entity_ids}")
         
         return len(entity_ids)
     
@@ -345,7 +373,7 @@ class Cursor:
         updated_entities = []
         for entity in entities:
             # Deserialize current data
-            row_data = serializer.deserialize_entity(entity.data, query_result.table_name)
+            row_data = serializer.deserialize_entity(entity.storage_value, query_result.table_name)
             
             # Apply updates
             row_data.update(query_result.update_data)

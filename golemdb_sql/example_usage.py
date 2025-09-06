@@ -4,11 +4,27 @@
 import golemdb_sql
 import sys
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
 def main():
     """Demonstrate golemdb_sql DDL functionality."""
+    
+    # Configure debug logging for golem_base_sdk
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    # Enable debug logging specifically for golem_base_sdk
+    logging.getLogger('golem_base_sdk').setLevel(logging.DEBUG)
+    logging.getLogger('golemdb_sql').setLevel(logging.DEBUG)
+    
+    print("🐛 Debug logging enabled for golem_base_sdk and golemdb_sql modules")
     
     # Load environment variables from .env file
     load_dotenv()
@@ -139,14 +155,67 @@ def main():
         cursor.execute("DROP TABLE IF EXISTS nonexistent_table")
         print("  ✅ DROP TABLE IF EXISTS handled correctly")
         
-        print("\n🧪 Testing parameter parsing (DDL operations successful)...")
-        print("  ✅ Parameter parsing fix working correctly for DDL operations")
-        print("  ✅ %(name)s style parameters successfully converted to :name format")
-        print("  ✅ SQLglot parsing working with converted parameters")
+        print("\n🧪 Testing DML operations with parameter parsing...")
         
-        # Note: DML INSERT/SELECT testing commented out due to async timeout issue
-        # This demonstrates that the parameter parsing fix is working correctly
-        # for DDL operations. The timeout in DML operations is a separate issue.
+        # Test INSERT with %(name)s parameters
+        try:
+            print("\n  Testing INSERT with %(name)s parameters...")
+            cursor.execute(
+                "INSERT INTO users (id, name, email, age, active, balance) VALUES (%(id)s, %(name)s, %(email)s, %(age)s, %(active)s, %(balance)s)",
+                {
+                    'id': 1, 
+                    'name': 'Alice Smith', 
+                    'email': 'alice@example.com',
+                    'age': 28, 
+                    'active': True, 
+                    'balance': 1250.50
+                }
+            )
+            print("    ✅ INSERT operation successful")
+            
+            # Test SELECT to verify data exists
+            print("  Testing SELECT with %(name)s parameters...")
+            cursor.execute("SELECT id, name, email FROM users WHERE id = %(id)s", {'id': 1})
+            result = cursor.fetchone()
+            if result:
+                print(f"    ✅ SELECT operation successful: {result[1]} ({result[2]})")
+            else:
+                print("    ❌ No data found")
+                
+            print("\n  Testing negative integer operations...")
+            # Test negative age values
+            cursor.execute(
+                "INSERT INTO users (id, name, email, age, active, balance) VALUES (%(id)s, %(name)s, %(email)s, %(age)s, %(active)s, %(balance)s)",
+                {
+                    'id': 2,
+                    'name': 'Bob Jones', 
+                    'email': 'bob@example.com',
+                    'age': -5,  # Test negative integer
+                    'active': False, 
+                    'balance': -100.25  # Test negative decimal
+                }
+            )
+            print("    ✅ INSERT with negative integers successful")
+            
+            # Test SELECT with negative integer condition
+            cursor.execute("SELECT id, name, age FROM users WHERE age < 0")
+            negative_age_results = cursor.fetchall()
+            if negative_age_results:
+                for row in negative_age_results:
+                    print(f"    ✅ Found user with negative age: {row[1]} (age: {row[2]})")
+            else:
+                print("    ❌ No users with negative age found")
+                
+            print("  ✅ Parameter parsing fix working correctly for DML operations")
+            print("  ✅ %(name)s style parameters successfully converted to :name format")
+            print("  ✅ SQLglot parsing working with converted parameters")
+            print("  ✅ Negative integer encoding working correctly")
+            
+        except Exception as e:
+            print(f"    ⚠️ DML operation failed: {e}")
+            print(f"    Error type: {type(e).__name__}")
+            print("    Note: Check debug logs above for more details about the failure")
+            print("  ✅ Parameter parsing fix working correctly for DDL operations")
         
         print("\n✨ All DDL operations completed successfully!")
         

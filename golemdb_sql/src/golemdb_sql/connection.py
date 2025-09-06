@@ -53,29 +53,51 @@ class Connection:
             raise DatabaseError(f"Failed to connect to GolemBase: {e}")
     
     def _init_async_client(self) -> None:
-        """Initialize async GolemBase client synchronously in main thread."""
+        """Initialize async GolemBase client with background event loop."""
+        import threading
+        
         try:
-            # Try to get existing event loop or create new one
+            # First, create the client in the main thread (for signal handler setup)
             try:
-                self._event_loop = asyncio.get_event_loop()
-                if self._event_loop.is_closed():
-                    raise RuntimeError("Event loop is closed")
-            except RuntimeError:
-                # No event loop in current thread, create a new one
+                # Try to get existing event loop or create new one in main thread
+                try:
+                    temp_loop = asyncio.get_event_loop()
+                    if temp_loop.is_closed():
+                        raise RuntimeError("Event loop is closed")
+                except RuntimeError:
+                    # No event loop in current thread, create a new one
+                    temp_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(temp_loop)
+                
+                # Create GolemBase client in main thread (for signal handlers)
+                client_coro = GolemBaseClient.create(
+                    rpc_url=self._params.rpc_url,
+                    ws_url=self._params.ws_url,
+                    private_key=self._params.get_private_key_bytes()
+                )
+                
+                # Initialize client in main thread
+                self._client = temp_loop.run_until_complete(
+                    asyncio.wait_for(client_coro, timeout=30.0)
+                )
+                
+                # Now create a separate event loop for background operations
                 self._event_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self._event_loop)
-            
-            # Create GolemBase client with timeout
-            client_coro = GolemBaseClient.create(
-                rpc_url=self._params.rpc_url,
-                ws_url=self._params.ws_url,
-                private_key=self._params.get_private_key_bytes()
-            )
-            
-            # Run with timeout
-            self._client = self._event_loop.run_until_complete(
-                asyncio.wait_for(client_coro, timeout=30.0)
-            )
+                
+                # Start event loop in background thread
+                def run_event_loop():
+                    asyncio.set_event_loop(self._event_loop)
+                    self._event_loop.run_forever()
+                    
+                self._loop_thread = threading.Thread(target=run_event_loop, daemon=True)
+                self._loop_thread.start()
+                
+                # Wait a moment for the background loop to start
+                import time
+                time.sleep(0.1)
+                
+            except Exception as e:
+                raise e
             
         except asyncio.TimeoutError:
             raise DatabaseError(
@@ -174,20 +196,30 @@ class Connection:
         Returns:
             Result of coroutine execution
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         if self._closed:
             raise InterfaceError("Connection is closed")
             
         if not self._event_loop or not self._client:
             raise InterfaceError("Connection not properly initialized")
         
+        logger.debug(f"Starting async operation: {coro}")
+        
         # Create a future to get the result
         future = asyncio.run_coroutine_threadsafe(coro, self._event_loop)
         
         try:
-            return future.result(timeout=30.0)  # 30 second timeout
+            logger.debug("Waiting for async operation to complete (30s timeout)...")
+            result = future.result(timeout=30.0)  # 30 second timeout
+            logger.debug(f"Async operation completed successfully: {result}")
+            return result
         except asyncio.TimeoutError:
+            logger.error("Async operation timed out after 30 seconds")
             raise OperationalError("Operation timed out")
         except Exception as e:
+            logger.error(f"Async operation failed with exception: {e}")
             raise DatabaseError(f"Async operation failed: {e}")
     
     def commit(self) -> None:
