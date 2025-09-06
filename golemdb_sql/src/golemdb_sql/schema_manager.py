@@ -5,6 +5,7 @@ import json
 import toml
 import sqlglot
 import re
+import appdirs
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, asdict
@@ -198,19 +199,16 @@ class SchemaManager:
         """Get path to schema TOML file.
         
         Returns:
-            Path to schema file in XDG user data directory
+            Path to schema file in user data directory
         """
-        # Get XDG user data directory
-        if os.name == 'nt':  # Windows
-            user_data = Path(os.environ.get('APPDATA', Path.home() / 'AppData' / 'Roaming'))
-        else:  # Unix-like
-            user_data = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share'))
+        # Get platform-appropriate user data directory using appdirs
+        user_data = Path(appdirs.user_data_dir('golembase', 'golembase'))
         
-        # Create golembase directory
-        golembase_dir = user_data / 'golembase' / 'schemas'
-        golembase_dir.mkdir(parents=True, exist_ok=True)
+        # Create schemas directory
+        schemas_dir = user_data / 'schemas'
+        schemas_dir.mkdir(parents=True, exist_ok=True)
         
-        return golembase_dir / f"{self.schema_id}.toml"
+        return schemas_dir / f"{self.schema_id}.toml"
     
     def _load_schema(self) -> None:
         """Load schema from TOML file."""
@@ -325,7 +323,7 @@ class SchemaManager:
                 raise ValueError("Not a CREATE TABLE statement")
             
             # Extract table name
-            table_name = parsed.this.name
+            table_name = parsed.this.this.name if hasattr(parsed.this.this, 'name') else str(parsed.this.this)
             
             # Extract columns
             columns = []
@@ -386,10 +384,14 @@ class SchemaManager:
         """
         col_name = col_expr.this.name
         
-        # Extract column type
+        # Extract column type from SQLglot args
         col_type = "TEXT"  # Default
-        if col_expr.kind:
+        if hasattr(col_expr, 'args') and 'kind' in col_expr.args and col_expr.args['kind']:
+            col_type = str(col_expr.args['kind']).upper()
+        elif hasattr(col_expr, 'kind') and col_expr.kind:
             col_type = str(col_expr.kind).upper()
+        elif hasattr(col_expr, 'type') and col_expr.type:
+            col_type = str(col_expr.type).upper()
         
         # Parse column type to extract precision, scale, length
         base_type, precision, scale, length = parse_column_type(col_type)
@@ -401,17 +403,20 @@ class SchemaManager:
         unique = False
         
         for constraint in col_expr.constraints:
-            if isinstance(constraint, exp.NotNullColumnConstraint):
+            # Handle ColumnConstraint wrapper
+            constraint_kind = constraint.kind if hasattr(constraint, 'kind') else constraint
+            
+            if isinstance(constraint_kind, exp.NotNullColumnConstraint):
                 nullable = False
-            elif isinstance(constraint, exp.DefaultColumnConstraint):
-                if constraint.this:
-                    default = str(constraint.this)
-            elif isinstance(constraint, exp.PrimaryKeyColumnConstraint):
+            elif isinstance(constraint_kind, exp.DefaultColumnConstraint):
+                if hasattr(constraint_kind, 'this') and constraint_kind.this:
+                    default = str(constraint_kind.this)
+            elif isinstance(constraint_kind, exp.PrimaryKeyColumnConstraint):
                 primary_key = True
                 nullable = False
-            elif isinstance(constraint, exp.UniqueColumnConstraint):
+            elif isinstance(constraint_kind, exp.UniqueColumnConstraint):
                 unique = True
-            elif isinstance(constraint, exp.AutoIncrementColumnConstraint):
+            elif isinstance(constraint_kind, exp.AutoIncrementColumnConstraint):
                 # Handle AUTOINCREMENT
                 pass
         

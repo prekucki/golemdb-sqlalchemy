@@ -2,7 +2,7 @@
 
 import time
 from datetime import date, datetime, time as time_obj
-from typing import Any, Union
+from typing import Any, Union, Tuple
 
 
 # PEP 249 Type Objects and Constructors

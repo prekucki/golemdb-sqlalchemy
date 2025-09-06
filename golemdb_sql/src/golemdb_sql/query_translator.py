@@ -1,6 +1,7 @@
 """SQL to GolemBase annotation query translator using SQLglot."""
 
 import sqlglot
+import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 from sqlglot import expressions as exp
@@ -35,6 +36,37 @@ class QueryTranslator:
         """
         self.schema_manager = schema_manager
     
+    def _preprocess_sql(self, sql: str, parameters: Optional[Dict[str, Any]] = None) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """Preprocess SQL to handle Python DB-API parameter styles.
+        
+        Converts %(name)s style parameters to named parameters that SQLglot can understand.
+        
+        Args:
+            sql: Original SQL with %(name)s parameters
+            parameters: Parameter values
+            
+        Returns:
+            Tuple of (processed_sql, processed_parameters)
+        """
+        if not parameters:
+            return sql, parameters
+        
+        # Find all %(name)s style parameters
+        param_pattern = r'%\((\w+)\)s'
+        param_matches = re.finditer(param_pattern, sql)
+        
+        processed_sql = sql
+        processed_params = parameters.copy() if isinstance(parameters, dict) else {}
+        
+        # Replace %(name)s with :name for SQLglot
+        for match in param_matches:
+            param_name = match.group(1)
+            old_param = match.group(0)  # %(name)s
+            new_param = f':{param_name}'  # :name
+            processed_sql = processed_sql.replace(old_param, new_param)
+        
+        return processed_sql, processed_params
+    
     def translate_select(self, sql: str, parameters: Optional[Dict[str, Any]] = None) -> QueryResult:
         """Translate SELECT statement to GolemBase query.
         
@@ -46,8 +78,11 @@ class QueryTranslator:
             Dictionary with query information and annotation filters
         """
         try:
+            # Preprocess SQL to handle parameter styles
+            processed_sql, processed_params = self._preprocess_sql(sql, parameters)
+            
             # Parse SQL
-            parsed = sqlglot.parse_one(sql, read="sqlite")
+            parsed = sqlglot.parse_one(processed_sql, read="sqlite")
             
             if not isinstance(parsed, exp.Select):
                 raise ValueError("Not a SELECT statement")
@@ -73,7 +108,7 @@ class QueryTranslator:
                         where_clause = where_clause.this
                 else:
                     where_clause = parsed.where
-            annotation_query = self._build_annotation_query(where_clause, table_name, parameters)
+            annotation_query = self._build_annotation_query(where_clause, table_name, processed_params)
             
             # Extract selected columns
             selected_columns = self._extract_selected_columns(parsed, table_name)
@@ -109,8 +144,11 @@ class QueryTranslator:
             Dictionary with insert information
         """
         try:
+            # Preprocess SQL to handle parameter styles
+            processed_sql, processed_params = self._preprocess_sql(sql, parameters)
+            
             # Parse SQL
-            parsed = sqlglot.parse_one(sql, read="sqlite")
+            parsed = sqlglot.parse_one(processed_sql, read="sqlite")
             
             if not isinstance(parsed, exp.Insert):
                 raise ValueError("Not an INSERT statement")
@@ -140,7 +178,7 @@ class QueryTranslator:
                     if isinstance(tuple_expr, exp.Tuple):
                         row_values = []
                         for val_expr in tuple_expr.expressions:
-                            value = self._extract_literal_value(val_expr, parameters)
+                            value = self._extract_literal_value(val_expr, processed_params)
                             row_values.append(value)
                         values.append(row_values)
             
@@ -174,8 +212,11 @@ class QueryTranslator:
             Dictionary with update information
         """
         try:
+            # Preprocess SQL to handle parameter styles
+            processed_sql, processed_params = self._preprocess_sql(sql, parameters)
+            
             # Parse SQL
-            parsed = sqlglot.parse_one(sql, read="sqlite")
+            parsed = sqlglot.parse_one(processed_sql, read="sqlite")
             
             if not isinstance(parsed, exp.Update):
                 raise ValueError("Not an UPDATE statement")
@@ -199,11 +240,11 @@ class QueryTranslator:
                 for set_expr in parsed.expressions:
                     if isinstance(set_expr, exp.EQ):
                         col_name = set_expr.this.name
-                        value = self._extract_literal_value(set_expr.expression, parameters)
+                        value = self._extract_literal_value(set_expr.expression, processed_params)
                         set_values[col_name] = value
             
             # Extract WHERE clause for finding entities to update
-            annotation_query = self._build_annotation_query(parsed.where, table_name, parameters)
+            annotation_query = self._build_annotation_query(parsed.where, table_name, processed_params)
             
             return QueryResult(
                 operation_type='UPDATE',
@@ -226,8 +267,11 @@ class QueryTranslator:
             Dictionary with delete information
         """
         try:
+            # Preprocess SQL to handle parameter styles
+            processed_sql, processed_params = self._preprocess_sql(sql, parameters)
+            
             # Parse SQL
-            parsed = sqlglot.parse_one(sql, read="sqlite")
+            parsed = sqlglot.parse_one(processed_sql, read="sqlite")
             
             if not isinstance(parsed, exp.Delete):
                 raise ValueError("Not a DELETE statement")
@@ -246,7 +290,7 @@ class QueryTranslator:
                 raise ProgrammingError(f"Table '{table_name}' does not exist")
             
             # Extract WHERE clause for finding entities to delete
-            annotation_query = self._build_annotation_query(parsed.where, table_name, parameters)
+            annotation_query = self._build_annotation_query(parsed.where, table_name, processed_params)
             
             return QueryResult(
                 operation_type='DELETE',
@@ -454,6 +498,10 @@ class QueryTranslator:
         elif isinstance(expr, exp.Placeholder):
             # Handle both named and positional parameters
             param_name = expr.name if hasattr(expr, 'name') else None
+            
+            # Handle :name style parameters (from our preprocessing)
+            if param_name and param_name.startswith(':'):
+                param_name = param_name[1:]  # Remove the ':' prefix
             
             if param_name and parameters and isinstance(parameters, dict) and param_name in parameters:
                 # Named parameter: :name, %(name)s

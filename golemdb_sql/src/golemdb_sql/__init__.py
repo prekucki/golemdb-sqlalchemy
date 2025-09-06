@@ -7,13 +7,13 @@ and compatibility with ORMs like SQLAlchemy.
 Example:
     import golemdb_sql
     
-    # Connect to database
+    # Connect to GolemBase database
     conn = golemdb_sql.connect(
-        host='localhost',
-        port=5432,
-        database='mydb',
-        user='user', 
-        password='pass'
+        rpc_url='https://ethwarsaw.holesky.golemdb.io/rpc',
+        ws_url='wss://ethwarsaw.holesky.golemdb.io/rpc/ws',
+        private_key='0x0000000000000000000000000000000000000000000000000000000000000001',
+        app_id='myapp',
+        schema_id='production'
     )
     
     # Execute queries
@@ -22,9 +22,15 @@ Example:
     rows = cursor.fetchall()
     
     # Use with context manager
-    with golemdb_sql.connect(**params) as conn:
+    with golemdb_sql.connect(
+        rpc_url='https://ethwarsaw.holesky.golemdb.io/rpc',
+        ws_url='wss://ethwarsaw.holesky.golemdb.io/rpc/ws',
+        private_key='0x0000000000000000000000000000000000000000000000000000000000000001',
+        app_id='myapp'
+    ) as conn:
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO users (name) VALUES (%s)", ['John'])
+        cursor.execute("INSERT INTO users (name, email) VALUES (%(name)s, %(email)s)", 
+                      {'name': 'John', 'email': 'john@example.com'})
         conn.commit()
 """
 
@@ -160,19 +166,18 @@ def quick_connect(connection_string: str) -> Connection:
     """Create connection from connection string.
     
     Args:
-        connection_string: Connection string in format:
-            "host=localhost port=5432 database=mydb user=user password=pass"
+        connection_string: Connection string in GolemBase format:
+            "rpc_url=https://... ws_url=wss://... private_key=0x... app_id=myapp"
             
     Returns:
         Connection object
         
     Example:
-        conn = quick_connect("host=localhost port=5432 database=test user=admin password=secret")
+        conn = quick_connect(
+            "rpc_url=https://ethwarsaw.holesky.golemdb.io/rpc "
+            "ws_url=wss://ethwarsaw.holesky.golemdb.io/rpc/ws "
+            "private_key=0x0000000000000000000000000000000000000000000000000000000000000001 "
+            "app_id=myapp schema_id=production"
+        )
     """
-    params = {}
-    for part in connection_string.split():
-        if '=' in part:
-            key, value = part.split('=', 1)
-            params[key.strip()] = value.strip()
-    
-    return connect(**params)
+    return connect(connection_string=connection_string)

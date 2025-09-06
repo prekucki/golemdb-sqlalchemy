@@ -241,16 +241,29 @@ class Cursor:
         
         # Parse and translate SQL to GolemBase operations
         operation = operation.strip()
-        if operation.upper().startswith('SELECT'):
+        operation_upper = operation.upper()
+        
+        # DDL Operations (Data Definition Language)
+        if operation_upper.startswith('CREATE TABLE'):
+            return self._execute_create_table(operation)
+        elif operation_upper.startswith('CREATE INDEX'):
+            return self._execute_create_index(operation)
+        elif operation_upper.startswith('DROP TABLE'):
+            return self._execute_drop_table(operation)
+        elif operation_upper.startswith('DROP INDEX'):
+            return self._execute_drop_index(operation)
+        
+        # DML Operations (Data Manipulation Language) 
+        elif operation_upper.startswith('SELECT'):
             query_result = translator.translate_select(operation, params_dict)
             return self._execute_select(sdk_client, query_result)
-        elif operation.upper().startswith('INSERT'):
+        elif operation_upper.startswith('INSERT'):
             query_result = translator.translate_insert(operation, params_dict)
             return self._execute_insert(sdk_client, query_result)
-        elif operation.upper().startswith('UPDATE'):
+        elif operation_upper.startswith('UPDATE'):
             query_result = translator.translate_update(operation, params_dict)
             return self._execute_update(sdk_client, query_result)
-        elif operation.upper().startswith('DELETE'):
+        elif operation_upper.startswith('DELETE'):
             query_result = translator.translate_delete(operation, params_dict)
             return self._execute_delete(sdk_client, query_result)
         else:
@@ -369,6 +382,241 @@ class Cursor:
             )
         
         return len(entity_ids)
+    
+    def _execute_create_table(self, operation: str) -> dict:
+        """Execute CREATE TABLE DDL operation.
+        
+        Args:
+            operation: CREATE TABLE SQL statement
+            
+        Returns:
+            Result dictionary with rowcount=0 for DDL operations
+        """
+        try:
+            # Get schema manager from connection
+            schema_manager = self._get_schema_manager()
+            
+            # Parse SQL and create table definition
+            table_def = schema_manager.create_table_from_sql(operation)
+            
+            # Check if table already exists
+            if schema_manager.table_exists(table_def.name):
+                raise ProgrammingError(f"Table '{table_def.name}' already exists")
+            
+            # Add to schema (automatically saves to TOML)
+            schema_manager.add_table(table_def)
+            
+            # Return success result (DDL operations have rowcount=0)
+            return {'rowcount': 0, 'description': None, 'rows': []}
+            
+        except Exception as e:
+            if isinstance(e, ProgrammingError):
+                raise
+            else:
+                raise ProgrammingError(f"Error creating table: {e}")
+    
+    def _execute_create_index(self, operation: str) -> dict:
+        """Execute CREATE INDEX DDL operation.
+        
+        Args:
+            operation: CREATE INDEX SQL statement
+            
+        Returns:
+            Result dictionary with rowcount=0 for DDL operations
+        """
+        try:
+            import sqlglot
+            from sqlglot import expressions as exp
+            from .schema_manager import IndexDefinition
+            
+            # Parse CREATE INDEX statement
+            parsed = sqlglot.parse_one(operation, read="sqlite")
+            
+            if not isinstance(parsed, exp.Create):
+                raise ValueError("Not a CREATE INDEX statement")
+                
+            # Extract index information from parsed.this (Index object)
+            index_obj = parsed.this
+            if not hasattr(index_obj, 'args') or 'this' not in index_obj.args or 'table' not in index_obj.args:
+                raise ValueError("Invalid CREATE INDEX statement format")
+                
+            # Get index name from args
+            index_name = index_obj.args['this'].name if hasattr(index_obj.args['this'], 'name') else str(index_obj.args['this'])
+            
+            # Get table name from args
+            table_obj = index_obj.args['table']
+            table_name = table_obj.this.name if hasattr(table_obj.this, 'name') else str(table_obj.this)
+            
+            # Get columns from args
+            columns = []
+            if 'columns' in index_obj.args and index_obj.args['columns']:
+                for col_expr in index_obj.args['columns']:
+                    # Handle Ordered columns (Column wrapped in Ordered)
+                    if hasattr(col_expr, 'this') and hasattr(col_expr.this, 'this'):
+                        col_name = col_expr.this.this.name if hasattr(col_expr.this.this, 'name') else str(col_expr.this.this)
+                    else:
+                        col_name = str(col_expr)
+                    columns.append(col_name)
+            
+            # Check for unique constraint
+            unique = bool(index_obj.args.get('unique', False))
+                
+            if not index_name or not table_name or not columns:
+                raise ValueError("Invalid CREATE INDEX statement format")
+            
+            # Get schema manager and check if table exists
+            schema_manager = self._get_schema_manager()
+            table_def = schema_manager.get_table(table_name)
+            
+            if not table_def:
+                raise ProgrammingError(f"Table '{table_name}' does not exist")
+            
+            # Check if index already exists
+            existing_index_names = [idx.name for idx in table_def.indexes]
+            if index_name in existing_index_names:
+                raise ProgrammingError(f"Index '{index_name}' already exists")
+            
+            # Create new index definition
+            new_index = IndexDefinition(
+                name=index_name,
+                columns=columns,
+                unique=unique
+            )
+            
+            # Add index to table definition
+            table_def.indexes.append(new_index)
+            
+            # Mark columns as indexed
+            for col_name in columns:
+                col_def = table_def.get_column(col_name)
+                if col_def:
+                    col_def.indexed = True
+            
+            # Save updated table definition
+            schema_manager.add_table(table_def)
+            
+            return {'rowcount': 0, 'description': None, 'rows': []}
+            
+        except Exception as e:
+            if isinstance(e, ProgrammingError):
+                raise
+            else:
+                raise ProgrammingError(f"Error creating index: {e}")
+    
+    def _execute_drop_table(self, operation: str) -> dict:
+        """Execute DROP TABLE DDL operation.
+        
+        Args:
+            operation: DROP TABLE SQL statement
+            
+        Returns:
+            Result dictionary with rowcount=0 for DDL operations
+        """
+        try:
+            import sqlglot
+            from sqlglot import expressions as exp
+            
+            # Parse DROP TABLE statement
+            parsed = sqlglot.parse_one(operation, read="sqlite")
+            
+            if not isinstance(parsed, exp.Drop) or not hasattr(parsed, 'this'):
+                raise ValueError("Not a DROP TABLE statement")
+            
+            # Extract table name
+            table_name = parsed.this.name if hasattr(parsed.this, 'name') else str(parsed.this)
+            
+            # Get schema manager and check if table exists
+            schema_manager = self._get_schema_manager()
+            
+            if not schema_manager.table_exists(table_name):
+                # Handle IF EXISTS clause
+                if 'IF EXISTS' in operation.upper():
+                    return {'rowcount': 0, 'description': None, 'rows': []}
+                else:
+                    raise ProgrammingError(f"Table '{table_name}' does not exist")
+            
+            # Remove table from schema
+            schema_manager.remove_table(table_name)
+            
+            return {'rowcount': 0, 'description': None, 'rows': []}
+            
+        except Exception as e:
+            if isinstance(e, ProgrammingError):
+                raise
+            else:
+                raise ProgrammingError(f"Error dropping table: {e}")
+    
+    def _execute_drop_index(self, operation: str) -> dict:
+        """Execute DROP INDEX DDL operation.
+        
+        Args:
+            operation: DROP INDEX SQL statement
+            
+        Returns:
+            Result dictionary with rowcount=0 for DDL operations
+        """
+        try:
+            import sqlglot
+            from sqlglot import expressions as exp
+            
+            # Parse DROP INDEX statement  
+            parsed = sqlglot.parse_one(operation, read="sqlite")
+            
+            if not isinstance(parsed, exp.Drop):
+                raise ValueError("Not a DROP INDEX statement")
+            
+            # Extract index name
+            index_name = parsed.this.name if hasattr(parsed.this, 'name') else str(parsed.this)
+            
+            # Get schema manager
+            schema_manager = self._get_schema_manager()
+            
+            # Find which table contains this index
+            target_table = None
+            target_index = None
+            
+            for table_name, table_def in schema_manager.tables.items():
+                for idx in table_def.indexes:
+                    if idx.name == index_name:
+                        target_table = table_def
+                        target_index = idx
+                        break
+                if target_table:
+                    break
+            
+            if not target_table:
+                # Handle IF EXISTS clause
+                if 'IF EXISTS' in operation.upper():
+                    return {'rowcount': 0, 'description': None, 'rows': []}
+                else:
+                    raise ProgrammingError(f"Index '{index_name}' does not exist")
+            
+            # Remove index from table definition
+            target_table.indexes.remove(target_index)
+            
+            # Update column indexed flags if no other indexes reference them
+            for col_name in target_index.columns:
+                col_def = target_table.get_column(col_name)
+                if col_def and not col_def.primary_key and not col_def.unique:
+                    # Check if any other indexes reference this column
+                    still_indexed = any(
+                        col_name in idx.columns 
+                        for idx in target_table.indexes 
+                        if idx != target_index
+                    )
+                    if not still_indexed:
+                        col_def.indexed = False
+            
+            # Save updated table definition
+            schema_manager.add_table(target_table)
+            
+            return {'rowcount': 0, 'description': None, 'rows': []}
+            
+        except Exception as e:
+            if isinstance(e, ProgrammingError):
+                raise
+            else:
+                raise ProgrammingError(f"Error dropping index: {e}")
     
     def _convert_parameters(self, parameters: Optional[Union[Dict[str, Any], Sequence[Any]]]) -> Any:
         """Convert parameters to format expected by golem-base-sdk.
@@ -530,6 +778,19 @@ class Cursor:
                 self._rownumber = self._rowcount - remaining - 1
             else:
                 self._rownumber = None
+    
+    def _get_schema_manager(self):
+        """Get schema manager instance from connection parameters.
+        
+        Returns:
+            SchemaManager instance for DDL operations
+        """
+        from .schema_manager import SchemaManager
+        
+        return SchemaManager(
+            schema_id=self._connection._params.schema_id,
+            project_id=self._connection._params.app_id
+        )
     
     def __iter__(self) -> 'Cursor':
         """Make cursor iterable."""

@@ -32,7 +32,7 @@ class TestAnnotationNamingStrategy:
             indexes=[
                 IndexDefinition(name="idx_posts_author_id", columns=["author_id"]),
                 IndexDefinition(name="idx_posts_is_published", columns=["is_published"]),
-                IndexDefinition(name="idx_posts_created_at", columns=["created_at"], desc=True),
+                IndexDefinition(name="idx_posts_created_at", columns=["created_at"]),
                 IndexDefinition(name="idx_posts_title", columns=["title"])
             ],
             foreign_keys=[]

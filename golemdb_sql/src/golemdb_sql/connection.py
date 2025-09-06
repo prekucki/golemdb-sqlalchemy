@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import requests
 from typing import Any, Dict, List, Optional, Union
 from golem_base_sdk import GolemBaseClient
 from .connection_parser import parse_connection_kwargs, GolemBaseConnectionParams
@@ -42,6 +43,9 @@ class Connection:
             # Parse connection parameters
             self._params = parse_connection_kwargs(**kwargs)
             
+            # Check basic connectivity first
+            self._check_connectivity()
+            
             # Initialize async client in background thread
             self._init_async_client()
             
@@ -49,43 +53,91 @@ class Connection:
             raise DatabaseError(f"Failed to connect to GolemBase: {e}")
     
     def _init_async_client(self) -> None:
-        """Initialize async GolemBase client in background thread."""
-        # Create event loop in separate thread for async operations
-        self._event_loop = asyncio.new_event_loop()
-        
-        def run_event_loop():
-            """Run event loop in background thread."""
-            asyncio.set_event_loop(self._event_loop)
+        """Initialize async GolemBase client synchronously in main thread."""
+        try:
+            # Try to get existing event loop or create new one
             try:
-                # Create GolemBase client
-                client_coro = GolemBaseClient.create(
-                    rpc_url=self._params.rpc_url,
-                    ws_url=self._params.ws_url,
-                    private_key=self._params.get_private_key_bytes()
-                )
-                self._client = self._event_loop.run_until_complete(client_coro)
-                
-                # Keep event loop running
-                self._event_loop.run_forever()
-            except Exception as e:
-                raise DatabaseError(f"Failed to initialize GolemBase client: {e}")
-            finally:
-                self._event_loop.close()
-        
-        # Start background thread
-        self._loop_thread = threading.Thread(target=run_event_loop, daemon=True)
-        self._loop_thread.start()
-        
-        # Wait for client to be ready
-        import time
-        max_wait = 10  # seconds
-        waited = 0
-        while self._client is None and waited < max_wait:
-            time.sleep(0.1)
-            waited += 0.1
+                self._event_loop = asyncio.get_event_loop()
+                if self._event_loop.is_closed():
+                    raise RuntimeError("Event loop is closed")
+            except RuntimeError:
+                # No event loop in current thread, create a new one
+                self._event_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._event_loop)
             
-        if self._client is None:
-            raise DatabaseError("Timeout waiting for GolemBase client initialization")
+            # Create GolemBase client with timeout
+            client_coro = GolemBaseClient.create(
+                rpc_url=self._params.rpc_url,
+                ws_url=self._params.ws_url,
+                private_key=self._params.get_private_key_bytes()
+            )
+            
+            # Run with timeout
+            self._client = self._event_loop.run_until_complete(
+                asyncio.wait_for(client_coro, timeout=30.0)
+            )
+            
+        except asyncio.TimeoutError:
+            raise DatabaseError(
+                f"Timeout connecting to GolemBase endpoints:\n"
+                f"  RPC URL: {self._params.rpc_url}\n"
+                f"  WS URL: {self._params.ws_url}\n"
+                f"Check network connectivity and endpoint availability."
+            )
+        except Exception as e:
+            error_msg = str(e)
+            if "signal only works in main thread" in error_msg:
+                raise DatabaseError(
+                    f"GolemBase SDK threading issue. Try running in main thread or use:\n"
+                    f"  import asyncio\n"
+                    f"  asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # Windows only\n"
+                    f"Original error: {e}"
+                )
+            else:
+                raise DatabaseError(
+                    f"Failed to initialize GolemBase client: {e}\n"
+                    f"  RPC URL: {self._params.rpc_url}\n"
+                    f"  WS URL: {self._params.ws_url}\n"
+                    f"  Error type: {type(e).__name__}"
+                )
+    
+    def _check_connectivity(self) -> None:
+        """Check basic connectivity to GolemBase endpoints before full initialization."""
+        import urllib.parse
+        
+        # Check RPC endpoint with a simple HTTP request
+        try:
+            response = requests.get(
+                self._params.rpc_url,
+                timeout=5,
+                headers={'User-Agent': 'golemdb-sql/0.1.0'}
+            )
+            # Any response (even error) means the endpoint is reachable
+        except requests.exceptions.Timeout:
+            raise DatabaseError(
+                f"RPC endpoint timeout:\n"
+                f"  URL: {self._params.rpc_url}\n"
+                f"  The server did not respond within 5 seconds."
+            )
+        except requests.exceptions.ConnectionError as e:
+            raise DatabaseError(
+                f"Cannot connect to RPC endpoint:\n"
+                f"  URL: {self._params.rpc_url}\n"
+                f"  Error: {e}\n"
+                f"  Check if the server is running and the URL is correct."
+            )
+        except Exception as e:
+            # Don't fail on other HTTP errors - the endpoint is reachable
+            pass
+        
+        # Check WebSocket URL format
+        parsed_ws = urllib.parse.urlparse(self._params.ws_url)
+        if parsed_ws.scheme not in ('ws', 'wss'):
+            raise DatabaseError(
+                f"Invalid WebSocket URL scheme:\n"
+                f"  URL: {self._params.ws_url}\n"
+                f"  Expected: ws:// or wss://"
+            )
     
     def close(self) -> None:
         """Close the connection now.

@@ -1,115 +1,196 @@
 # golemdb-sql
 
-A PEP 249 compliant Python Database API 2.0 implementation for GolemBase database.
+A **PEP 249 compliant** Python Database API 2.0 implementation for GolemBase - the world's first **decentralized database**.
 
-This package provides a standard Python database interface that allows GolemBase databases to work with Python applications, ORMs like SQLAlchemy, and other database tools that expect a DB-API 2.0 compliant driver.
+Transform GolemBase into a familiar SQL database interface that works seamlessly with Python applications, ORMs like SQLAlchemy, and any tool expecting standard database connectivity.
 
-## Features
+## 🚀 Key Features
 
-- **PEP 249 Compliant**: Full Python Database API 2.0 specification compliance
-- **Transaction Support**: Complete transaction management with commit/rollback
-- **Context Manager**: Connection and transaction context manager support  
-- **Type Safety**: Proper type mapping between GolemBase and Python types
-- **Error Handling**: Complete DB-API exception hierarchy
-- **Iterator Protocol**: Cursors support Python iteration
-- **Thread Safe**: Thread-safe connection sharing (threadsafety level 1)
-- **Schema Management**: Automatic parsing of CREATE TABLE statements with SQLglot
-- **Precision/Scale Metadata**: DECIMAL precision/scale extraction from DECIMAL(p,s) definitions  
-- **TOML Schema Persistence**: Schema storage in XDG user data directories
-- **Advanced Type System**: All signed integers encoded for uint64 storage with ordering preservation
-- **DECIMAL String Encoding**: DECIMAL/NUMERIC values stored as lexicographically-ordered strings
-- **Query Translation**: SQL WHERE clauses converted to GolemDB annotation queries with automatic value encoding
+### **Standard SQL Interface**
+- **Full DDL Support**: `CREATE TABLE`, `CREATE INDEX`, `DROP TABLE`, `DROP INDEX` 
+- **Complete DML Operations**: `SELECT`, `INSERT`, `UPDATE`, `DELETE` with complex WHERE clauses
+- **PEP 249 Compliant**: Drop-in replacement for any Python database driver
+- **Transaction Management**: Full commit/rollback support with context managers
 
-## Installation
+### **GolemBase Integration** 
+- **Multi-tenant Architecture**: Project-based schema isolation (`relation="project.table"`)
+- **Advanced Type System**: Proper encoding for signed integers, DECIMAL precision, datetime handling
+- **Query Translation**: SQL automatically converted to GolemDB annotation queries
+- **Schema Persistence**: Automatic TOML-based schema management with platform-specific storage
 
-### From PyPI
+### **Developer Experience**
+- **Environment Variables**: Secure `.env` file configuration support
+- **Comprehensive Error Handling**: Detailed error messages with context
+- **Iterator Protocol**: Pythonic cursor iteration support
+- **Connection Pooling**: Thread-safe connection sharing (level 1)
+- **SQLAlchemy Ready**: Works out-of-the-box with ORMs
+
+## 📦 Installation
+
 ```bash
+# From PyPI (when published)
 pip install golemdb-sql
-```
 
-### From Source
-```bash
+# From source
 git clone <repository-url>
-cd golemdb_sql
+cd golemdb-sqlalchemy/golemdb_sql
 poetry install
 ```
 
-## Requirements
+**Requirements**: Python 3.10+ • golem-base-sdk==0.1.0
 
-- Python 3.10+
-- golem-base-sdk==0.1.0
+## ⚡ Quick Start
 
-## Quick Start
+### 🔧 Setup
 
-### Basic Usage
+Create a `.env` file for secure configuration:
+
+```bash
+# .env
+PRIVATE_KEY=0x1234...your-private-key
+RPC_URL=https://ethwarsaw.holesky.golemdb.io/rpc
+WS_URL=wss://ethwarsaw.holesky.golemdb.io/rpc/ws
+APP_ID=myapp
+SCHEMA_ID=production
+```
+
+### 🏗️ Create Tables & Indexes
 
 ```python
 import golemdb_sql
+import os
 
-# Connect to database
+# Connect using environment variables
 conn = golemdb_sql.connect(
-    host='localhost',
-    port=5432,
-    database='mydb',
-    user='user',
-    password='password'
+    rpc_url=os.getenv('RPC_URL'),
+    ws_url=os.getenv('WS_URL'),
+    private_key=os.getenv('PRIVATE_KEY'),
+    app_id=os.getenv('APP_ID'),
+    schema_id=os.getenv('SCHEMA_ID')
 )
 
-# Execute queries
 cursor = conn.cursor()
-cursor.execute("SELECT id, name FROM users WHERE active = %(active)s", {'active': True})
 
-# Fetch results
-for row in cursor:
-    print(f"User {row[0]}: {row[1]}")
-
-# Close connection
-cursor.close()
-conn.close()
-```
-
-### Context Manager Usage
-
-```python
-import golemdb_sql
-
-# Automatic connection and transaction management
-with golemdb_sql.connect(host='localhost', database='mydb') as conn:
-    cursor = conn.cursor()
-    
-    # Insert data
-    cursor.execute(
-        "INSERT INTO users (name, email) VALUES (%(name)s, %(email)s)",
-        {'name': 'John Doe', 'email': 'john@example.com'}
+# CREATE TABLE with full SQL syntax
+cursor.execute("""
+    CREATE TABLE users (
+        id INTEGER PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(200) NOT NULL UNIQUE,
+        balance DECIMAL(10,2) DEFAULT 0.00,
+        active BOOLEAN DEFAULT TRUE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
-    
-    # Changes are automatically committed if no exceptions occur
-    # Connection is automatically closed
+""")
+
+# CREATE INDEX for query optimization
+cursor.execute("CREATE INDEX idx_users_active ON users(active)")
+cursor.execute("CREATE INDEX idx_users_created_at ON users(created_at)")
+
+print("✅ Tables and indexes created!")
 ```
 
-### Batch Operations
+### 📝 Insert & Query Data
 
 ```python
-import golemdb_sql
-
-conn = golemdb_sql.connect(**connection_params)
-cursor = conn.cursor()
-
-# Execute multiple operations
+# Insert data
 users = [
-    {'name': 'Alice', 'email': 'alice@example.com'},
-    {'name': 'Bob', 'email': 'bob@example.com'},
-    {'name': 'Carol', 'email': 'carol@example.com'}
+    {'name': 'Alice Smith', 'email': 'alice@example.com', 'balance': 1250.50},
+    {'name': 'Bob Johnson', 'email': 'bob@example.com', 'balance': 750.25},
+    {'name': 'Carol White', 'email': 'carol@example.com', 'balance': 2100.00}
 ]
 
 cursor.executemany(
-    "INSERT INTO users (name, email) VALUES (%(name)s, %(email)s)",
+    "INSERT INTO users (name, email, balance) VALUES (%(name)s, %(email)s, %(balance)s)",
     users
 )
 
+# Query with WHERE clause
+cursor.execute(
+    "SELECT id, name, balance FROM users WHERE balance > %(min_balance)s ORDER BY balance DESC",
+    {'min_balance': 1000.00}
+)
+
+# Fetch and display results
+for user_id, name, balance in cursor:
+    print(f"User {user_id}: {name} - ${balance:,.2f}")
+
+# Commit and close
 conn.commit()
 cursor.close()
 conn.close()
+```
+
+### 🔄 Transaction Management
+
+```python
+# Context manager ensures automatic cleanup
+with golemdb_sql.connect(
+    rpc_url=os.getenv('RPC_URL'),
+    ws_url=os.getenv('WS_URL'), 
+    private_key=os.getenv('PRIVATE_KEY'),
+    app_id='myapp'
+) as conn:
+    cursor = conn.cursor()
+    
+    try:
+        # Multiple operations in single transaction
+        cursor.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR(100), price DECIMAL(10,2))")
+        cursor.execute("INSERT INTO products (name, price) VALUES (%(name)s, %(price)s)", 
+                      {'name': 'Widget', 'price': 29.99})
+        cursor.execute("UPDATE products SET price = %(price)s WHERE name = %(name)s",
+                      {'name': 'Widget', 'price': 24.99})
+        
+        # Auto-commit on success, auto-rollback on exception
+        
+    except Exception as e:
+        print(f"Transaction failed: {e}")
+        # Rollback automatic via context manager
+```
+
+### DDL Support - Create Tables and Indexes
+
+GolemDB-SQL supports standard DDL operations through cursor.execute():
+
+```python
+import golemdb_sql
+
+conn = golemdb_sql.connect(
+    rpc_url='https://ethwarsaw.holesky.golemdb.io/rpc',
+    ws_url='wss://ethwarsaw.holesky.golemdb.io/rpc/ws', 
+    private_key='0x0000000000000000000000000000000000000000000000000000000000000001',
+    app_id='blog_app',
+    schema_id='production'
+)
+
+cursor = conn.cursor()
+
+# CREATE TABLE with full SQL syntax support
+cursor.execute("""
+    CREATE TABLE posts (
+        id INTEGER PRIMARY KEY,
+        title VARCHAR(200) NOT NULL,
+        content TEXT,
+        author_id INTEGER NOT NULL,
+        is_published BOOLEAN DEFAULT FALSE,
+        price DECIMAL(10,2),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+""")
+
+# CREATE INDEX for query optimization
+cursor.execute("CREATE INDEX idx_posts_author_id ON posts(author_id)")
+cursor.execute("CREATE INDEX idx_posts_is_published ON posts(is_published)")
+cursor.execute("CREATE INDEX idx_posts_created_at ON posts(created_at)")
+
+# DROP operations with IF EXISTS support
+cursor.execute("DROP INDEX IF EXISTS idx_old_index")
+cursor.execute("DROP TABLE IF EXISTS old_table")
+
+# Schema is automatically saved to platform-specific directories:
+# Linux: ~/.local/share/golembase/schemas/production.toml
+# macOS: ~/Library/Application Support/golembase/schemas/production.toml  
+# Windows: %APPDATA%/golembase/schemas/production.toml
 ```
 
 ## API Reference
@@ -197,7 +278,10 @@ This package is designed to work seamlessly with the SQLAlchemy GolemBase dialec
 from sqlalchemy import create_engine
 
 # The SQLAlchemy dialect will automatically use this DB-API package
-engine = create_engine("golembase://user:pass@localhost:5432/mydb")
+engine = create_engine(
+    "golembase://0x0000000000000000000000000000000000000000000000000000000000000001@ethwarsaw.holesky.golemdb.io/myapp"
+    "?ws_url=wss://ethwarsaw.holesky.golemdb.io/rpc/ws&schema_id=production"
+)
 
 # Use with SQLAlchemy ORM
 from sqlalchemy.orm import sessionmaker
@@ -209,24 +293,54 @@ session = Session()
 
 ### Connection Parameters
 
-The `connect()` function accepts these parameters:
+The `connect()` function accepts these GolemBase parameters:
 
-- `host`: Database server hostname
-- `port`: Database server port  
-- `database`: Database name
-- `user`: Username
-- `password`: Password
+- `rpc_url`: HTTPS RPC endpoint URL (required)
+- `ws_url`: WebSocket URL for real-time events (required) 
+- `private_key`: Hex private key for authentication (required)
+- `app_id`: Application/Project identifier (default: 'default')
+- `schema_id`: Schema configuration identifier (default: 'default')
 - Additional parameters supported by golem-base-sdk
 
 ### Connection String Format
 
-You can also use connection strings:
+You can also use connection strings in multiple formats:
 
 ```python
-conn = golemdb_sql.quick_connect(
-    "host=localhost port=5432 database=mydb user=user password=pass"
+# Key-value format
+conn = golemdb_sql.connect(connection_string=
+    "rpc_url=https://ethwarsaw.holesky.golemdb.io/rpc "
+    "ws_url=wss://ethwarsaw.holesky.golemdb.io/rpc/ws "
+    "private_key=0x0000000000000000000000000000000000000000000000000000000000000001 "
+    "app_id=myapp schema_id=production"
 )
+
+# URL format
+conn = golemdb_sql.connect(connection_string=
+    "golembase://0x0000000000000000000000000000000000000000000000000000000000000001@ethwarsaw.holesky.golemdb.io/myapp"
+    "?ws_url=wss://ethwarsaw.holesky.golemdb.io/rpc/ws&schema_id=production"
+)
+
+# Environment variables support
+import os
+conn = golemdb_sql.connect(
+    rpc_url=os.getenv('RPC_URL'),
+    ws_url=os.getenv('WS_URL'),
+    private_key=os.getenv('PRIVATE_KEY'),
+    app_id=os.getenv('APP_ID', 'default'),
+    schema_id=os.getenv('SCHEMA_ID', 'production')
+)
+
+# Using .env files for configuration
+# Create a .env file in your project directory:
+# PRIVATE_KEY=0x1234...
+# RPC_URL=https://ethwarsaw.holesky.golemdb.io/rpc
+# WS_URL=wss://ethwarsaw.holesky.golemdb.io/rpc/ws
+# APP_ID=myapp
+# SCHEMA_ID=production
 ```
+
+For a complete example with .env file support, see [`example_usage.py`](example_usage.py).
 
 ## Error Handling
 
@@ -235,9 +349,15 @@ import golemdb_sql
 from golemdb_sql import DatabaseError, IntegrityError
 
 try:
-    with golemdb_sql.connect(**params) as conn:
+    with golemdb_sql.connect(
+        rpc_url='https://ethwarsaw.holesky.golemdb.io/rpc',
+        ws_url='wss://ethwarsaw.holesky.golemdb.io/rpc/ws',
+        private_key='0x0000000000000000000000000000000000000000000000000000000000000001',
+        app_id='myapp'
+    ) as conn:
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+        cursor.execute("INSERT INTO users (id, name, email) VALUES (%(id)s, %(name)s, %(email)s)",
+                      {'id': 1, 'name': 'Alice', 'email': 'alice@example.com'})
         
 except IntegrityError as e:
     print(f"Constraint violation: {e}")
