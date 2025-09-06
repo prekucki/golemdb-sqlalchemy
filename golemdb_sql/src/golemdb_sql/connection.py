@@ -6,7 +6,6 @@ import requests
 from typing import Any, Dict, List, Optional, Union
 from golem_base_sdk import GolemBaseClient
 
-# Remove nest_asyncio - it conflicts with uvloop
 from .connection_parser import parse_connection_kwargs, GolemBaseConnectionParams
 from .cursor import Cursor
 from .exceptions import (

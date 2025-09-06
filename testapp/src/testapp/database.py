@@ -144,30 +144,14 @@ def get_golembase_connection():
     """Get a GolemBase connection from the pool."""
     global _connection_pool
     if _connection_pool is None:
-        # Try to load from saved file first
-        import pickle
-        import tempfile
-        import os
-        
-        temp_file = os.path.join(tempfile.gettempdir(), 'golembase_connection.pkl')
-        if os.path.exists(temp_file):
-            try:
-                print("📂 Loading GolemBase connection from saved file...")
-                with open(temp_file, 'rb') as f:
-                    _connection_pool = pickle.load(f)
-                print("✅ Connection loaded successfully!")
-                return _connection_pool
-            except Exception as e:
-                print(f"⚠️  Failed to load saved connection: {e}")
-        
-        # Fall back to normal initialization
+        # Initialize connection pool
         try:
             print("🔄 Attempting to initialize connection pool...")
             initialize_connection_pool()
         except Exception as e:
             raise RuntimeError(
                 f"Connection pool not initialized and initialization failed: {e}\n"
-                f"Try running: python init_connections.py first"
+                f"Make sure you're running in an environment where GolemBase client can be initialized"
             )
     return _connection_pool
 
